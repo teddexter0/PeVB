@@ -1,0 +1,15 @@
+node_modules/
+.next/
+out/
+
+# NEVER commit these — your API keys live here
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+.vercel
+.DS_Store
+Thumbs.db
+npm-debug.log*
