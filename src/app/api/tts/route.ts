@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "../auth/[...nextauth]/route";
+import { authOptions } from "@/lib/auth";
 import { VOICES, VoiceDay } from "@/lib/voices";
+
+function truncateToBytes(str: string, maxBytes: number): string {
+  const buf = Buffer.from(str, "utf8");
+  if (buf.length <= maxBytes) return str;
+  return buf.slice(0, maxBytes).toString("utf8");
+}
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -25,8 +31,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "GOOGLE_TTS_API_KEY not set" }, { status: 500 });
   }
 
-  // Trim text to stay within free tier (1M chars/month — very generous)
-  const trimmedText = text.slice(0, 5000);
+  // Truncate by UTF-8 byte length (Google TTS limit is 5000 bytes, not chars)
+  const trimmedText = truncateToBytes(text, 4800);
 
   try {
     const response = await fetch(
