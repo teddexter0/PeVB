@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "../auth/[...nextauth]/route";
+import { authOptions } from "@/lib/auth";
 import { fetchNewsletters } from "@/lib/gmail";
 import { generateDigest } from "@/lib/gemini";
 import { saveDigest } from "@/lib/store";
