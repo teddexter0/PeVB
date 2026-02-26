@@ -3,7 +3,9 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { fetchNewsletters } from "@/lib/gmail";
 import { generateDigest } from "@/lib/gemini";
-import { saveDigest } from "@/lib/store";
+import { saveDigest, loadDigest } from "@/lib/store";
+
+const DIGEST_MAX_AGE_HOURS = 4;
 
 export const maxDuration = 60; // Allow up to 60s for AI processing
 
@@ -42,6 +44,16 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // Return cached digest if it's fresh enough — avoids burning Gemini quota
+    const existing = loadDigest();
+    if (existing?.generatedAt) {
+      const ageHours = (Date.now() - new Date(existing.generatedAt).getTime()) / 3_600_000;
+      if (ageHours < DIGEST_MAX_AGE_HOURS) {
+        console.log(`Returning cached digest (${ageHours.toFixed(1)}h old)`);
+        return NextResponse.json({ success: true, count: existing.entries.length, digest: existing, cached: true });
+      }
+    }
+
     console.log("Fetching newsletters from Gmail...");
     const emails = await fetchNewsletters(accessToken);
     console.log(`Found ${emails.length} newsletters. Generating digest...`);

@@ -100,43 +100,81 @@ export async function fetchNewsletters(accessToken: string): Promise<RawEmail[]>
 
   const newsletters: RawEmail[] = [];
 
-  for (const msg of messages) {
-    if (!msg.id) continue;
+  // Pass 1: fetch metadata only (headers) — much cheaper quota-wise
+  const metaResults = await Promise.allSettled(
+    messages.map((msg) =>
+      msg.id
+        ? gmail.users.messages.get({
+            userId: "me",
+            id: msg.id,
+            format: "metadata",
+            metadataHeaders: ["from", "subject", "date", "list-unsubscribe", "list-id", "precedence"],
+          })
+        : Promise.reject("no id")
+    )
+  );
 
+  // Filter to likely newsletters using headers alone (no body needed yet)
+  const newsletterIds: Array<{ id: string; headers: any[] }> = [];
+  for (const result of metaResults) {
+    if (result.status !== "fulfilled") continue;
+    const payload = result.value.data.payload;
+    const headers = payload?.headers || [];
+    const getHeader = (name: string) =>
+      headers.find((h: any) => h.name?.toLowerCase() === name.toLowerCase())?.value || "";
+    const from = getHeader("from").toLowerCase();
+    const listUnsubscribe = getHeader("list-unsubscribe");
+    const listId = getHeader("list-id");
+    const precedence = getHeader("precedence").toLowerCase();
+    const isLikely =
+      customSenders.some((s) => from.includes(s.toLowerCase().trim())) ||
+      listUnsubscribe ||
+      listId ||
+      precedence === "bulk" ||
+      precedence === "list";
+    if (isLikely && result.value.data.id) {
+      newsletterIds.push({ id: result.value.data.id, headers });
+    }
+  }
+
+  console.log(`${newsletterIds.length} likely newsletters from ${messages.length} emails (metadata pass)`);
+
+  // Pass 2: fetch full body only for confirmed newsletters
+  for (const { id, headers } of newsletterIds) {
     try {
       const detail = await gmail.users.messages.get({
         userId: "me",
-        id: msg.id,
+        id,
         format: "full",
       });
 
       const payload = detail.data.payload;
-      const headers = payload?.headers || [];
+      const allHeaders = payload?.headers || [];
 
       const getHeader = (name: string) =>
-        headers.find((h: any) => h.name?.toLowerCase() === name.toLowerCase())
+        allHeaders.find((h: any) => h.name?.toLowerCase() === name.toLowerCase())
           ?.value || "";
 
       const body = decodeBody(payload);
 
-      if (!isNewsletter(headers as any, body, customSenders)) continue;
+      // Body-based fallback check (unsubscribe link) for borderline cases
+      if (!isNewsletter(allHeaders as any, body, customSenders)) continue;
 
       const fromRaw = getHeader("from");
-      // Parse "Name <email>" format
       const nameMatch = fromRaw.match(/^(.+?)\s*<(.+?)>/);
       const senderName = nameMatch ? nameMatch[1].replace(/"/g, "").trim() : fromRaw;
       const senderEmail = nameMatch ? nameMatch[2] : fromRaw;
 
       newsletters.push({
-        id: msg.id,
+        id,
         sender: senderName,
         senderEmail: senderEmail,
         subject: getHeader("subject"),
         date: getHeader("date"),
-        body: body.slice(0, 8000), // Cap to avoid huge token usage
+        body: body.slice(0, 8000),
       });
     } catch (err) {
-      console.error(`Failed to fetch message ${msg.id}:`, err);
+      console.error(`Failed to fetch full message ${id}:`, err);
     }
   }
 

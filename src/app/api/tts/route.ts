@@ -48,8 +48,7 @@ export async function POST(req: NextRequest) {
           },
           audioConfig: {
             audioEncoding: "MP3",
-            speakingRate: 0.95, // Slightly slower = easier to listen to
-            pitch: 0,
+            // speakingRate/pitch omitted: Journey voices don't support them and return errors
           },
         }),
       }
