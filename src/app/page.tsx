@@ -109,6 +109,7 @@ function SignInPage() {
 function VoicePlayer({ digest }: { digest: Digest }) {
   const [selectedVoice, setSelectedVoice] = useState<VoiceDay>(getTodayVoice());
   const [playing, setPlaying] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [loading, setLoading] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -124,14 +125,31 @@ function VoicePlayer({ digest }: { digest: Digest }) {
     return lines.join(" ");
   }
 
-  async function handlePlay() {
-    if (playing && audioRef.current) {
+  function stopAudio() {
+    if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
-      setPlaying(false);
+    }
+    setPlaying(false);
+    setPaused(false);
+  }
+
+  async function handlePlayPause() {
+    // Resume from pause
+    if (paused && audioRef.current) {
+      audioRef.current.play();
+      setPlaying(true);
+      setPaused(false);
       return;
     }
-
+    // Pause while playing
+    if (playing && audioRef.current) {
+      audioRef.current.pause();
+      setPlaying(false);
+      setPaused(true);
+      return;
+    }
+    // Fresh load & play
     setLoading(true);
     try {
       const text = buildReadableText(digest);
@@ -145,9 +163,10 @@ function VoicePlayer({ digest }: { digest: Digest }) {
 
       const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
       audioRef.current = audio;
-      audio.onended = () => setPlaying(false);
+      audio.onended = () => { setPlaying(false); setPaused(false); };
       audio.play();
       setPlaying(true);
+      setPaused(false);
     } catch (err) {
       console.error("TTS failed:", err);
       alert("Voice failed — check GOOGLE_TTS_API_KEY in your env.");
@@ -157,7 +176,6 @@ function VoicePlayer({ digest }: { digest: Digest }) {
   }
 
   const activeVoice = VOICES[selectedVoice];
-  const inactiveVoice = selectedVoice === "sunday" ? "wednesday" : "sunday";
 
   return (
     <div
@@ -171,9 +189,9 @@ function VoicePlayer({ digest }: { digest: Digest }) {
         flexWrap: "wrap",
       }}
     >
-      {/* Play button */}
+      {/* Play/Pause button */}
       <button
-        onClick={handlePlay}
+        onClick={handlePlayPause}
         disabled={loading}
         style={{
           background: "var(--accent)",
@@ -189,7 +207,7 @@ function VoicePlayer({ digest }: { digest: Digest }) {
           flexShrink: 0,
         }}
       >
-        {loading ? "…" : playing ? "■" : "▶"}
+        {loading ? "…" : playing ? "⏸" : "▶"}
       </button>
 
       {/* Voice info */}
@@ -214,11 +232,7 @@ function VoicePlayer({ digest }: { digest: Digest }) {
           <button
             key={v}
             onClick={() => {
-              if (playing && audioRef.current) {
-                audioRef.current.pause();
-                audioRef.current = null;
-                setPlaying(false);
-              }
+              stopAudio();
               setSelectedVoice(v);
             }}
             style={{
