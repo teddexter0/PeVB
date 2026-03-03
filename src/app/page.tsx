@@ -109,6 +109,7 @@ function SignInPage() {
 function VoicePlayer({ digest }: { digest: Digest }) {
   const [selectedVoice, setSelectedVoice] = useState<VoiceDay>(getTodayVoice());
   const [playing, setPlaying] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [loading, setLoading] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -124,14 +125,31 @@ function VoicePlayer({ digest }: { digest: Digest }) {
     return lines.join(" ");
   }
 
-  async function handlePlay() {
-    if (playing && audioRef.current) {
+  function stopAudio() {
+    if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
-      setPlaying(false);
+    }
+    setPlaying(false);
+    setPaused(false);
+  }
+
+  async function handlePlayPause() {
+    // Resume from pause
+    if (paused && audioRef.current) {
+      audioRef.current.play();
+      setPlaying(true);
+      setPaused(false);
       return;
     }
-
+    // Pause while playing
+    if (playing && audioRef.current) {
+      audioRef.current.pause();
+      setPlaying(false);
+      setPaused(true);
+      return;
+    }
+    // Fresh load & play
     setLoading(true);
     try {
       const text = buildReadableText(digest);
@@ -145,9 +163,10 @@ function VoicePlayer({ digest }: { digest: Digest }) {
 
       const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
       audioRef.current = audio;
-      audio.onended = () => setPlaying(false);
+      audio.onended = () => { setPlaying(false); setPaused(false); };
       audio.play();
       setPlaying(true);
+      setPaused(false);
     } catch (err) {
       console.error("TTS failed:", err);
       alert("Voice failed — check GOOGLE_TTS_API_KEY in your env.");
@@ -157,7 +176,6 @@ function VoicePlayer({ digest }: { digest: Digest }) {
   }
 
   const activeVoice = VOICES[selectedVoice];
-  const inactiveVoice = selectedVoice === "sunday" ? "wednesday" : "sunday";
 
   return (
     <div
@@ -171,9 +189,9 @@ function VoicePlayer({ digest }: { digest: Digest }) {
         flexWrap: "wrap",
       }}
     >
-      {/* Play button */}
+      {/* Play/Pause button */}
       <button
-        onClick={handlePlay}
+        onClick={handlePlayPause}
         disabled={loading}
         style={{
           background: "var(--accent)",
@@ -189,7 +207,7 @@ function VoicePlayer({ digest }: { digest: Digest }) {
           flexShrink: 0,
         }}
       >
-        {loading ? "…" : playing ? "■" : "▶"}
+        {loading ? "…" : playing ? "⏸" : "▶"}
       </button>
 
       {/* Voice info */}
@@ -214,11 +232,7 @@ function VoicePlayer({ digest }: { digest: Digest }) {
           <button
             key={v}
             onClick={() => {
-              if (playing && audioRef.current) {
-                audioRef.current.pause();
-                audioRef.current = null;
-                setPlaying(false);
-              }
+              stopAudio();
               setSelectedVoice(v);
             }}
             style={{
@@ -249,6 +263,36 @@ function DigestPage({ digest, onRefresh, refreshing }: {
 }) {
   const { data: session } = useSession();
   const name = session?.user?.name?.split(" ")[0] || "you";
+  const [currentEntry, setCurrentEntryState] = useState<number>(0);
+  const entryRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  // Restore saved position from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem("thebrief_entry");
+    if (saved) setCurrentEntryState(parseInt(saved, 10));
+  }, []);
+
+  // Scroll to saved position once digest loads
+  useEffect(() => {
+    if (!digest) return;
+    const saved = localStorage.getItem("thebrief_entry");
+    const idx = saved ? parseInt(saved, 10) : 0;
+    const clamped = Math.min(idx, digest.entries.length - 1);
+    setCurrentEntryState(clamped);
+    setTimeout(() => {
+      entryRefs.current[clamped]?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 350);
+  }, [digest?.generatedAt]);
+
+  function navigateTo(idx: number) {
+    if (!digest) return;
+    const clamped = Math.max(0, Math.min(idx, digest.entries.length - 1));
+    setCurrentEntryState(clamped);
+    localStorage.setItem("thebrief_entry", String(clamped));
+    setTimeout(() => {
+      entryRefs.current[clamped]?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  }
 
   const formatDate = (iso: string) => {
     try {
@@ -305,14 +349,49 @@ function DigestPage({ digest, onRefresh, refreshing }: {
           marginBottom: "1.5rem",
         }}
       >
-        <span
-          className="font-mono"
-          style={{ fontSize: "0.7rem", color: "var(--muted)", letterSpacing: "0.05em" }}
-        >
-          {digest
-            ? `${digest.entries.length} NEWSLETTERS · GENERATED ${formatDate(digest.generatedAt).toUpperCase()}`
-            : "NO DIGEST YET"}
-        </span>
+        {digest && digest.entries.length > 0 ? (
+          <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <button
+              onClick={() => navigateTo(currentEntry - 1)}
+              disabled={currentEntry === 0}
+              style={{
+                background: "none",
+                border: "none",
+                fontFamily: "DM Mono",
+                fontSize: "0.8rem",
+                color: currentEntry === 0 ? "var(--border)" : "var(--muted)",
+                cursor: currentEntry === 0 ? "default" : "pointer",
+                padding: "0 0.15rem",
+                lineHeight: 1,
+              }}
+            >
+              ←
+            </button>
+            <span className="font-mono" style={{ fontSize: "0.7rem", color: "var(--muted)", letterSpacing: "0.05em" }}>
+              {currentEntry + 1} / {digest.entries.length} NEWSLETTERS
+            </span>
+            <button
+              onClick={() => navigateTo(currentEntry + 1)}
+              disabled={currentEntry === digest.entries.length - 1}
+              style={{
+                background: "none",
+                border: "none",
+                fontFamily: "DM Mono",
+                fontSize: "0.8rem",
+                color: currentEntry === digest.entries.length - 1 ? "var(--border)" : "var(--muted)",
+                cursor: currentEntry === digest.entries.length - 1 ? "default" : "pointer",
+                padding: "0 0.15rem",
+                lineHeight: 1,
+              }}
+            >
+              →
+            </button>
+          </div>
+        ) : (
+          <span className="font-mono" style={{ fontSize: "0.7rem", color: "var(--muted)", letterSpacing: "0.05em" }}>
+            {digest ? "NO NEWSLETTERS THIS PERIOD" : "NO DIGEST YET"}
+          </span>
+        )}
         <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
           <button
             className="btn-primary"
@@ -419,8 +498,18 @@ function DigestPage({ digest, onRefresh, refreshing }: {
 
           {/* Newsletter entries */}
           {digest.entries.map((entry, i) => (
-            <div key={i}>
-              <div className="digest-card">
+            <div key={i} ref={(el) => { entryRefs.current[i] = el; }}>
+              <div
+                className="digest-card"
+                onClick={() => navigateTo(i)}
+                style={{
+                  opacity: i === currentEntry ? 1 : 0.45,
+                  cursor: "pointer",
+                  transition: "opacity 0.2s",
+                  outline: i === currentEntry ? "2px solid var(--accent)" : "none",
+                  outlineOffset: "2px",
+                }}
+              >
                 {/* Sender + date */}
                 <div
                   style={{
