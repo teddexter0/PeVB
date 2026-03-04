@@ -106,76 +106,116 @@ function SignInPage() {
   );
 }
 
-function VoicePlayer({ digest }: { digest: Digest }) {
+type Segment = { text: string; entryIndex: number | null; label: string };
+
+function buildSegments(d: Digest): Segment[] {
+  return [
+    {
+      text: `The Brief. ${d.dateRange}. ${d.overallHighlights}.`,
+      entryIndex: null,
+      label: "Introduction",
+    },
+    ...d.entries.map((e, i) => ({
+      text: `From ${e.sender}. ${e.subject}. ${e.summary}`,
+      entryIndex: i,
+      label: e.sender,
+    })),
+  ];
+}
+
+function VoicePlayer({
+  digest,
+  onReadingEntry,
+}: {
+  digest: Digest;
+  onReadingEntry: (i: number | null) => void;
+}) {
   const [selectedVoice, setSelectedVoice] = useState<VoiceDay>(getTodayVoice());
-  const [playing, setPlaying] = useState(false);
-  const [paused, setPaused] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [readingState, setReadingState] = useState<"idle" | "loading" | "playing" | "paused">("idle");
+  const [currentLabel, setCurrentLabel] = useState("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const segmentsRef = useRef<Segment[]>([]);
+  const playIdRef = useRef(0);
+  const voiceRef = useRef(selectedVoice);
+  const onReadingEntryRef = useRef(onReadingEntry);
 
-  function buildReadableText(d: Digest): string {
-    const lines = [
-      `The Brief. ${d.dateRange}.`,
-      `This week's highlights: ${d.overallHighlights}`,
-      "",
-      ...d.entries.map(
-        (e) => `From ${e.sender}. ${e.subject}. ${e.summary}`
-      ),
-    ];
-    return lines.join(" ");
-  }
+  useEffect(() => { voiceRef.current = selectedVoice; }, [selectedVoice]);
+  useEffect(() => { onReadingEntryRef.current = onReadingEntry; }, [onReadingEntry]);
 
-  function stopAudio() {
+  function stopAll() {
+    playIdRef.current++;
     if (audioRef.current) {
+      audioRef.current.onended = null;
       audioRef.current.pause();
       audioRef.current = null;
     }
-    setPlaying(false);
-    setPaused(false);
+    setReadingState("idle");
+    setCurrentLabel("");
+    onReadingEntryRef.current(null);
   }
 
-  async function handlePlayPause() {
-    // Resume from pause
-    if (paused && audioRef.current) {
-      audioRef.current.play();
-      setPlaying(true);
-      setPaused(false);
+  async function playSegmentAt(index: number, playId: number) {
+    if (playIdRef.current !== playId) return;
+    const segments = segmentsRef.current;
+
+    if (index >= segments.length) {
+      setReadingState("idle");
+      setCurrentLabel("");
+      onReadingEntryRef.current(null);
       return;
     }
-    // Pause while playing
-    if (playing && audioRef.current) {
-      audioRef.current.pause();
-      setPlaying(false);
-      setPaused(true);
-      return;
-    }
-    // Fresh load & play
-    setLoading(true);
+
+    const seg = segments[index];
+    setReadingState("loading");
+    setCurrentLabel(seg.label);
+    onReadingEntryRef.current(seg.entryIndex);
+
     try {
-      const text = buildReadableText(digest);
       const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice: selectedVoice }),
+        body: JSON.stringify({ text: seg.text, voice: voiceRef.current }),
       });
       const data = await res.json();
       if (!data.audioContent) throw new Error("No audio returned");
+      if (playIdRef.current !== playId) return;
 
       const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
       audioRef.current = audio;
-      audio.onended = () => { setPlaying(false); setPaused(false); };
+      audio.onended = () => {
+        if (playIdRef.current !== playId) return;
+        playSegmentAt(index + 1, playId);
+      };
       audio.play();
-      setPlaying(true);
-      setPaused(false);
+      setReadingState("playing");
     } catch (err) {
+      if (playIdRef.current !== playId) return;
       console.error("TTS failed:", err);
       alert("Voice failed — check GOOGLE_TTS_API_KEY in your env.");
-    } finally {
-      setLoading(false);
+      setReadingState("idle");
+      onReadingEntryRef.current(null);
     }
   }
 
+  async function handlePlayPause() {
+    if (readingState === "playing" && audioRef.current) {
+      audioRef.current.pause();
+      setReadingState("paused");
+      return;
+    }
+    if (readingState === "paused" && audioRef.current) {
+      audioRef.current.play();
+      setReadingState("playing");
+      return;
+    }
+    const segs = buildSegments(digest);
+    segmentsRef.current = segs;
+    const playId = ++playIdRef.current;
+    playSegmentAt(0, playId);
+  }
+
   const activeVoice = VOICES[selectedVoice];
+  const isActive = readingState !== "idle";
 
   return (
     <div
@@ -192,7 +232,7 @@ function VoicePlayer({ digest }: { digest: Digest }) {
       {/* Play/Pause button */}
       <button
         onClick={handlePlayPause}
-        disabled={loading}
+        disabled={readingState === "loading"}
         style={{
           background: "var(--accent)",
           border: "none",
@@ -202,37 +242,45 @@ function VoicePlayer({ digest }: { digest: Digest }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          cursor: loading ? "not-allowed" : "pointer",
+          cursor: readingState === "loading" ? "not-allowed" : "pointer",
           fontSize: "1rem",
           flexShrink: 0,
         }}
       >
-        {loading ? "…" : playing ? "⏸" : "▶"}
+        {readingState === "loading" ? "…" : readingState === "playing" ? "⏸" : "▶"}
       </button>
 
       {/* Voice info */}
-      <div style={{ flex: 1 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
         <div
           className="font-mono"
           style={{ fontSize: "0.65rem", color: "rgba(245,240,232,0.5)", letterSpacing: "0.1em", marginBottom: "0.1rem" }}
         >
-          NOW READING WITH
+          {isActive ? "NOW READING" : "READ ALOUD WITH"}
         </div>
         <div
           className="font-serif"
-          style={{ color: "var(--paper)", fontSize: "1rem" }}
+          style={{
+            color: "var(--paper)",
+            fontSize: "1rem",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
         >
-          {activeVoice.label} · {activeVoice.description}
+          {isActive && currentLabel
+            ? currentLabel
+            : `${activeVoice.label} · ${activeVoice.description}`}
         </div>
       </div>
 
-      {/* Toggle */}
+      {/* Voice toggle */}
       <div style={{ display: "flex", gap: "0.5rem" }}>
         {(["sunday", "wednesday"] as VoiceDay[]).map((v) => (
           <button
             key={v}
             onClick={() => {
-              stopAudio();
+              stopAll();
               setSelectedVoice(v);
             }}
             style={{
@@ -264,6 +312,7 @@ function DigestPage({ digest, onRefresh, refreshing }: {
   const { data: session } = useSession();
   const name = session?.user?.name?.split(" ")[0] || "you";
   const [currentEntry, setCurrentEntryState] = useState<number>(0);
+  const [readingEntry, setReadingEntry] = useState<number | null>(null);
   const entryRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   // Restore saved position from localStorage on mount
@@ -283,6 +332,13 @@ function DigestPage({ digest, onRefresh, refreshing }: {
       entryRefs.current[clamped]?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 350);
   }, [digest?.generatedAt]);
+
+  // Auto-scroll to whichever email the voice is currently reading
+  useEffect(() => {
+    if (readingEntry === null) return;
+    setCurrentEntryState(readingEntry);
+    entryRefs.current[readingEntry]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [readingEntry]);
 
   function navigateTo(idx: number) {
     if (!digest) return;
@@ -454,7 +510,9 @@ function DigestPage({ digest, onRefresh, refreshing }: {
       {digest && !refreshing && (
         <div className="fade-up fade-up-delay-2">
           {/* Voice player */}
-          {digest.entries.length > 0 && <VoicePlayer digest={digest} />}
+          {digest.entries.length > 0 && (
+            <VoicePlayer digest={digest} onReadingEntry={setReadingEntry} />
+          )}
 
           {/* Overall highlights box */}
           {digest.overallHighlights && digest.entries.length > 0 && (
@@ -497,19 +555,45 @@ function DigestPage({ digest, onRefresh, refreshing }: {
           )}
 
           {/* Newsletter entries */}
-          {digest.entries.map((entry, i) => (
+          {digest.entries.map((entry, i) => {
+            const isReading = readingEntry === i;
+            const isFocused = i === currentEntry;
+            return (
             <div key={i} ref={(el) => { entryRefs.current[i] = el; }}>
               <div
                 className="digest-card"
                 onClick={() => navigateTo(i)}
                 style={{
-                  opacity: i === currentEntry ? 1 : 0.45,
+                  position: "relative",
+                  opacity: isReading ? 1 : (readingEntry !== null ? 0.3 : isFocused ? 1 : 0.45),
                   cursor: "pointer",
-                  transition: "opacity 0.2s",
-                  outline: i === currentEntry ? "2px solid var(--accent)" : "none",
+                  transition: "opacity 0.3s, outline 0.2s, background 0.2s",
+                  outline: isReading
+                    ? "2px solid var(--accent)"
+                    : isFocused ? "1px solid var(--border)" : "none",
                   outlineOffset: "2px",
+                  background: isReading ? "rgba(var(--accent-rgb, 180,60,40), 0.05)" : undefined,
                 }}
               >
+                {/* NOW READING badge */}
+                {isReading && (
+                  <div
+                    className="font-mono"
+                    style={{
+                      position: "absolute",
+                      top: "0.75rem",
+                      right: "0.75rem",
+                      fontSize: "0.55rem",
+                      letterSpacing: "0.15em",
+                      color: "var(--accent)",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.3rem",
+                    }}
+                  >
+                    ▶ NOW READING
+                  </div>
+                )}
                 {/* Sender + date */}
                 <div
                   style={{
@@ -572,7 +656,8 @@ function DigestPage({ digest, onRefresh, refreshing }: {
 
               {i < digest.entries.length - 1 && <hr className="rule-thin" />}
             </div>
-          ))}
+          );
+          })}
 
           {/* Footer */}
           <hr className="rule" />
