@@ -3,7 +3,7 @@
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useEffect, useState, useRef, forwardRef, useImperativeHandle } from "react";
 import { Digest } from "@/lib/gemini";
-import { VOICES, VoiceDay, getTodayVoice } from "@/lib/voices";
+import { VOICE_POOL, VOICE_KEYS, VoiceKey, getDefaultVoice, buildRotationQueue } from "@/lib/voices";
 
 function SignInPage() {
   return (
@@ -77,18 +77,24 @@ function SignInPage() {
 
 type Segment = { text: string; entryIndex: number | null; label: string };
 
-function buildSegments(d: Digest, voice: VoiceDay): Segment[] {
-  const isSunday = voice === "sunday";
-  const intro = isSunday
-    ? `Alright. The Brief. ${d.dateRange}. ${d.overallHighlights}`
-    : `Right, let's go. The Brief. ${d.dateRange}. ${d.overallHighlights}`;
+function buildSegments(d: Digest, voiceKey: VoiceKey): Segment[] {
+  const style = VOICE_POOL[voiceKey]?.style ?? "other";
+  const intro =
+    style === "american"
+      ? `Alright. The Brief. ${d.dateRange}. ${d.overallHighlights}`
+      : style === "british"
+      ? `Right, let's go. The Brief. ${d.dateRange}. ${d.overallHighlights}`
+      : `Here's The Brief. ${d.dateRange}. ${d.overallHighlights}`;
   return [
     { text: intro, entryIndex: null, label: "Introduction" },
     ...d.entries.map((e, i) => {
       const hook = e.tagline || e.sender;
-      const text = isSunday
-        ? `${hook}. ${e.summary}`
-        : `${hook}. Right, so — ${e.summary}`;
+      const text =
+        style === "american"
+          ? `${hook}. ${e.summary}`
+          : style === "british"
+          ? `${hook}. Right, so — ${e.summary}`
+          : `${hook}. ${e.summary}`;
       return { text, entryIndex: i, label: e.sender };
     }),
   ];
@@ -103,25 +109,31 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
   digest: Digest;
   onReadingEntry: (i: number | null) => void;
 }>(function VoicePlayer({ digest, onReadingEntry }, ref) {
-  const [selectedVoice, setSelectedVoice] = useState<VoiceDay>(getTodayVoice());
+  const [selectedVoice, setSelectedVoice] = useState<VoiceKey>(getDefaultVoice());
   const [readingState, setReadingState] = useState<"idle" | "loading" | "playing" | "paused">("idle");
   const [currentLabel, setCurrentLabel] = useState("");
   const [speed, setSpeed] = useState(1);
+  const [autoRotate, setAutoRotate] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const segmentsRef = useRef<Segment[]>([]);
   const playIdRef = useRef(0);
   const segmentIndexRef = useRef(0);
-  const voiceRef = useRef(selectedVoice);
+  const voiceRef = useRef<VoiceKey>(getDefaultVoice());
   const speedRef = useRef(1);
   const onReadingEntryRef = useRef(onReadingEntry);
+  const emailsPlayedRef = useRef(0);
+  const rotationQueueRef = useRef<VoiceKey[]>([]);
+  const autoRotateRef = useRef(false);
 
-  useEffect(() => { voiceRef.current = selectedVoice; }, [selectedVoice]);
-  useEffect(() => {
-    speedRef.current = speed;
-    if (audioRef.current) audioRef.current.playbackRate = speed;
-  }, [speed]);
+  useEffect(() => { speedRef.current = speed; if (audioRef.current) audioRef.current.playbackRate = speed; }, [speed]);
   useEffect(() => { onReadingEntryRef.current = onReadingEntry; }, [onReadingEntry]);
+  useEffect(() => { autoRotateRef.current = autoRotate; }, [autoRotate]);
+
+  function applyVoice(key: VoiceKey) {
+    voiceRef.current = key;
+    setSelectedVoice(key);
+  }
 
   function cancelCurrent(): number {
     const newPlayId = ++playIdRef.current;
@@ -131,6 +143,13 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
       audioRef.current = null;
     }
     return newPlayId;
+  }
+
+  function getNextRotationVoice(): VoiceKey {
+    if (!rotationQueueRef.current.length) {
+      rotationQueueRef.current = buildRotationQueue(voiceRef.current);
+    }
+    return rotationQueueRef.current.shift()!;
   }
 
   async function playSegmentAt(index: number, playId: number) {
@@ -166,6 +185,19 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
       audio.playbackRate = speedRef.current;
       audio.onended = () => {
         if (playIdRef.current !== playId) return;
+        // Auto-rotate: every 5 emails played, switch accent
+        if (seg.entryIndex !== null) {
+          emailsPlayedRef.current++;
+          if (autoRotateRef.current && emailsPlayedRef.current % 5 === 0) {
+            const nextVoice = getNextRotationVoice();
+            applyVoice(nextVoice);
+            // Rebuild segments with new voice framing for remaining entries
+            const newSegs = buildSegments(digest, nextVoice);
+            segmentsRef.current = newSegs;
+            playSegmentAt(index + 1, playId);
+            return;
+          }
+        }
         playSegmentAt(index + 1, playId);
       };
       audio.play();
@@ -187,13 +219,11 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
     playSegmentAt(clamped, playId);
   }
 
-  // Switch voice mid-read: continues from same segment with new voice framing
-  function switchVoice(newVoice: VoiceDay) {
+  function switchVoice(newVoice: VoiceKey) {
     const currentIndex = segmentIndexRef.current;
     const wasActive = readingState !== "idle";
     const newPlayId = cancelCurrent();
-    voiceRef.current = newVoice;
-    setSelectedVoice(newVoice);
+    applyVoice(newVoice);
     if (wasActive) {
       const segs = buildSegments(digest, newVoice);
       segmentsRef.current = segs;
@@ -205,7 +235,7 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
     }
   }
 
-  async function handlePlayPause() {
+  function handlePlayPause() {
     if (readingState === "playing" && audioRef.current) {
       audioRef.current.pause();
       setReadingState("paused");
@@ -219,6 +249,7 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
     const segs = buildSegments(digest, voiceRef.current);
     segmentsRef.current = segs;
     segmentIndexRef.current = 0;
+    emailsPlayedRef.current = 0;
     const playId = ++playIdRef.current;
     playSegmentAt(0, playId);
   }
@@ -236,6 +267,7 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
       const segs = buildSegments(digest, voiceRef.current);
       segmentsRef.current = segs;
       segmentIndexRef.current = 0;
+      emailsPlayedRef.current = 0;
       const playId = cancelCurrent();
       playSegmentAt(0, playId);
     },
@@ -245,7 +277,7 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
     setSpeed((s) => (s === 0.75 ? 1 : s === 1 ? 1.25 : 0.75));
   }
 
-  const activeVoice = VOICES[selectedVoice];
+  const activeVoice = VOICE_POOL[selectedVoice];
   const isActive = readingState !== "idle";
   const totalSegs = segmentsRef.current.length;
   const canPrev = isActive && segmentIndexRef.current > 0;
@@ -253,84 +285,115 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
 
   return (
     <>
-      {/* Top player bar */}
+      {/* ── Top player bar ─────────────────────────────────────────── */}
       <div
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "1rem",
-          padding: "1rem 1.25rem",
           background: "var(--ink)",
           marginBottom: "1.5rem",
-          flexWrap: "wrap",
+          padding: "0.75rem 1rem",
         }}
       >
-        <button
-          onClick={handlePlayPause}
-          disabled={readingState === "loading"}
-          style={{
-            background: "var(--accent)",
-            border: "none",
-            color: "white",
-            width: "2.5rem",
-            height: "2.5rem",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: readingState === "loading" ? "not-allowed" : "pointer",
-            fontSize: "1rem",
-            flexShrink: 0,
-          }}
-        >
-          {readingState === "loading" ? "…" : readingState === "playing" ? "⏸" : "▶"}
-        </button>
-
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            className="font-mono"
-            style={{ fontSize: "0.65rem", color: "rgba(245,240,232,0.5)", letterSpacing: "0.1em", marginBottom: "0.1rem" }}
+        {/* Row 1: transport + label + auto-rotate */}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <button
+            onClick={handlePlayPause}
+            disabled={readingState === "loading"}
+            style={{
+              background: "var(--accent)",
+              border: "none",
+              color: "white",
+              width: "2.25rem",
+              height: "2.25rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: readingState === "loading" ? "not-allowed" : "pointer",
+              fontSize: "0.9rem",
+              flexShrink: 0,
+            }}
           >
-            {isActive ? "NOW READING" : "READ ALOUD WITH"}
+            {readingState === "loading" ? "…" : readingState === "playing" ? "⏸" : "▶"}
+          </button>
+
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              className="font-mono"
+              style={{ fontSize: "0.6rem", color: "rgba(245,240,232,0.45)", letterSpacing: "0.1em", marginBottom: "0.1rem" }}
+            >
+              {isActive ? "NOW READING" : "READ ALOUD WITH"}
+            </div>
+            <div
+              className="font-serif"
+              style={{ color: "var(--paper)", fontSize: "0.9rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >
+              {isActive && currentLabel
+                ? currentLabel
+                : `${activeVoice?.flag ?? ""} ${activeVoice?.label ?? ""}`}
+            </div>
           </div>
-          <div className="font-serif" style={{ color: "var(--paper)", fontSize: "1rem", lineHeight: 1.3 }}>
-            {isActive && currentLabel ? (
-              currentLabel
-            ) : (
-              <>
-                <span>{activeVoice.label}</span>
-                <span style={{ color: "rgba(245,240,232,0.45)", fontSize: "0.8rem" }}>
-                  {" · "}{activeVoice.description}
-                </span>
-              </>
-            )}
-          </div>
+
+          {/* Auto-rotate toggle */}
+          <button
+            onClick={() => setAutoRotate((v) => !v)}
+            title="Auto-rotate accent every 5 emails"
+            style={{
+              background: autoRotate ? "var(--accent)" : "rgba(245,240,232,0.08)",
+              border: "1px solid",
+              borderColor: autoRotate ? "var(--accent)" : "rgba(245,240,232,0.15)",
+              color: autoRotate ? "white" : "rgba(245,240,232,0.45)",
+              padding: "0.25rem 0.5rem",
+              fontFamily: "DM Mono",
+              fontSize: "0.55rem",
+              letterSpacing: "0.08em",
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+          >
+            {autoRotate ? "AUTO ✓" : "AUTO"}
+          </button>
         </div>
 
-        <div style={{ display: "flex", gap: "0.5rem", flexShrink: 0 }}>
-          {(["sunday", "wednesday"] as VoiceDay[]).map((v) => (
-            <button
-              key={v}
-              onClick={() => switchVoice(v)}
-              style={{
-                background: selectedVoice === v ? "var(--accent)" : "transparent",
-                border: "1px solid",
-                borderColor: selectedVoice === v ? "var(--accent)" : "rgba(245,240,232,0.2)",
-                color: selectedVoice === v ? "white" : "rgba(245,240,232,0.5)",
-                padding: "0.35rem 0.75rem",
-                fontFamily: "DM Mono",
-                fontSize: "0.65rem",
-                letterSpacing: "0.05em",
-                cursor: "pointer",
-                textTransform: "uppercase",
-              }}
-            >
-              {VOICES[v].label}
-            </button>
-          ))}
+        {/* Row 2: voice chips — horizontally scrollable */}
+        <div
+          style={{
+            display: "flex",
+            gap: "0.4rem",
+            marginTop: "0.65rem",
+            overflowX: "auto",
+            paddingBottom: "2px",
+            // hide scrollbar visually
+            scrollbarWidth: "none",
+          }}
+        >
+          {VOICE_KEYS.map((key) => {
+            const v = VOICE_POOL[key];
+            const isSelected = key === selectedVoice;
+            return (
+              <button
+                key={key}
+                onClick={() => switchVoice(key)}
+                style={{
+                  background: isSelected ? "var(--accent)" : "transparent",
+                  border: "1px solid",
+                  borderColor: isSelected ? "var(--accent)" : "rgba(245,240,232,0.18)",
+                  color: isSelected ? "white" : "rgba(245,240,232,0.5)",
+                  padding: "0.2rem 0.55rem",
+                  fontFamily: "DM Mono",
+                  fontSize: "0.6rem",
+                  letterSpacing: "0.04em",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
+                }}
+              >
+                {v.flag} {v.label} {v.gender === "F" ? "♀" : "♂"}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Floating mini-player — only when active */}
+      {/* ── Floating mini-player (Spotify-style, fixed to screen) ─── */}
       {isActive && (
         <div
           style={{
@@ -338,114 +401,101 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
             bottom: 0,
             left: 0,
             right: 0,
+            // iPhone safe area
+            paddingBottom: "env(safe-area-inset-bottom, 0px)",
             background: "var(--ink)",
-            borderTop: "1px solid rgba(245,240,232,0.12)",
-            padding: "0.6rem 1rem",
-            display: "flex",
-            alignItems: "center",
-            gap: "0.75rem",
-            zIndex: 100,
+            borderTop: "1px solid rgba(245,240,232,0.15)",
+            zIndex: 200,
           }}
         >
-          {/* Transport */}
-          <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexShrink: 0 }}>
-            <button
-              onClick={() => skipTo(segmentIndexRef.current - 1)}
-              disabled={!canPrev}
-              title="Previous"
-              style={{
-                background: "none",
-                border: "none",
-                color: canPrev ? "var(--paper)" : "rgba(245,240,232,0.2)",
-                cursor: canPrev ? "pointer" : "default",
-                fontSize: "1.1rem",
-                padding: "0.2rem",
-                lineHeight: 1,
-              }}
-            >⏮</button>
-            <button
-              onClick={handlePlayPause}
-              disabled={readingState === "loading"}
-              style={{
-                background: "var(--accent)",
-                border: "none",
-                color: "white",
-                width: "2rem",
-                height: "2rem",
-                borderRadius: "50%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-                fontSize: "0.8rem",
-                flexShrink: 0,
-              }}
-            >
-              {readingState === "loading" ? "…" : readingState === "playing" ? "⏸" : "▶"}
-            </button>
-            <button
-              onClick={() => skipTo(segmentIndexRef.current + 1)}
-              disabled={!canNext}
-              title="Next"
-              style={{
-                background: "none",
-                border: "none",
-                color: canNext ? "var(--paper)" : "rgba(245,240,232,0.2)",
-                cursor: canNext ? "pointer" : "default",
-                fontSize: "1.1rem",
-                padding: "0.2rem",
-                lineHeight: 1,
-              }}
-            >⏭</button>
-          </div>
-
-          {/* Label */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div
-              className="font-serif"
-              style={{
-                color: "var(--paper)",
-                fontSize: "0.85rem",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {currentLabel || "The Brief"}
+          <div
+            style={{
+              maxWidth: "720px",
+              margin: "0 auto",
+              padding: "0.55rem 1rem",
+              display: "flex",
+              alignItems: "center",
+              gap: "0.65rem",
+            }}
+          >
+            {/* Transport */}
+            <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", flexShrink: 0 }}>
+              <button
+                onClick={() => skipTo(segmentIndexRef.current - 1)}
+                disabled={!canPrev}
+                style={{
+                  background: "none", border: "none",
+                  color: canPrev ? "var(--paper)" : "rgba(245,240,232,0.2)",
+                  cursor: canPrev ? "pointer" : "default",
+                  fontSize: "1rem", padding: "0.2rem", lineHeight: 1,
+                }}
+              >⏮</button>
+              <button
+                onClick={handlePlayPause}
+                disabled={readingState === "loading"}
+                style={{
+                  background: "var(--accent)", border: "none", color: "white",
+                  width: "2rem", height: "2rem", borderRadius: "50%",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  cursor: "pointer", fontSize: "0.75rem", flexShrink: 0,
+                }}
+              >
+                {readingState === "loading" ? "…" : readingState === "playing" ? "⏸" : "▶"}
+              </button>
+              <button
+                onClick={() => skipTo(segmentIndexRef.current + 1)}
+                disabled={!canNext}
+                style={{
+                  background: "none", border: "none",
+                  color: canNext ? "var(--paper)" : "rgba(245,240,232,0.2)",
+                  cursor: canNext ? "pointer" : "default",
+                  fontSize: "1rem", padding: "0.2rem", lineHeight: 1,
+                }}
+              >⏭</button>
             </div>
-          </div>
 
-          {/* Speed + scroll to top */}
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexShrink: 0 }}>
-            <button
-              onClick={cycleSpeed}
-              title="Playback speed"
-              style={{
-                background: "rgba(245,240,232,0.1)",
-                border: "none",
-                color: "var(--paper)",
-                padding: "0.2rem 0.45rem",
-                fontFamily: "DM Mono",
-                fontSize: "0.65rem",
-                cursor: "pointer",
-                letterSpacing: "0.03em",
-              }}
-            >
-              {speed}×
-            </button>
-            <button
-              onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-              title="Back to top"
-              style={{
-                background: "none",
-                border: "none",
-                color: "rgba(245,240,232,0.5)",
-                cursor: "pointer",
-                fontSize: "1rem",
-                padding: "0.2rem",
-                lineHeight: 1,
-              }}
-            >↑</button>
+            {/* Label + voice chip */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div
+                className="font-serif"
+                style={{
+                  color: "var(--paper)", fontSize: "0.82rem",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}
+              >
+                {currentLabel || "The Brief"}
+              </div>
+              <div
+                className="font-mono"
+                style={{ fontSize: "0.55rem", color: "rgba(245,240,232,0.4)", marginTop: "0.1rem" }}
+              >
+                {activeVoice?.flag} {activeVoice?.label} {activeVoice?.gender === "F" ? "♀" : "♂"}
+                {autoRotate && " · AUTO"}
+              </div>
+            </div>
+
+            {/* Speed + top */}
+            <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexShrink: 0 }}>
+              <button
+                onClick={cycleSpeed}
+                style={{
+                  background: "rgba(245,240,232,0.1)", border: "none", color: "var(--paper)",
+                  padding: "0.2rem 0.4rem", fontFamily: "DM Mono",
+                  fontSize: "0.6rem", cursor: "pointer", letterSpacing: "0.03em",
+                }}
+              >
+                {speed}×
+              </button>
+              <button
+                onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+                style={{
+                  background: "none", border: "none",
+                  color: "rgba(245,240,232,0.45)", cursor: "pointer",
+                  fontSize: "0.95rem", padding: "0.2rem", lineHeight: 1,
+                }}
+                title="Back to top"
+              >↑</button>
+            </div>
           </div>
         </div>
       )}
