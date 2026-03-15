@@ -1,4 +1,3 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { RawEmail } from "./gmail";
 
 export interface DigestEntry {
@@ -16,10 +15,47 @@ export interface Digest {
   overallHighlights: string;
 }
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const MODEL = "gemini-2.0-flash";
+// ─── AI providers ────────────────────────────────────────────────────────────
 
-// Deduplicate by sender — keep most recent per sender
+async function callAnthropic(prompt: string): Promise<string> {
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+  const msg = await client.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 4096,
+    messages: [{ role: "user", content: prompt }],
+  });
+  const block = msg.content[0];
+  if (block.type !== "text") throw new Error("Unexpected response type from Anthropic");
+  return block.text;
+}
+
+async function callGemini(prompt: string): Promise<string> {
+  const { GoogleGenerativeAI } = await import("@google/generative-ai");
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+  const result = await model.generateContent(prompt);
+  return result.response.text().trim();
+}
+
+async function generateText(prompt: string): Promise<string> {
+  if (process.env.ANTHROPIC_API_KEY) {
+    try {
+      console.log("Using Anthropic (Claude) for digest generation...");
+      return await callAnthropic(prompt);
+    } catch (err: any) {
+      console.warn("Anthropic failed, falling back to Gemini:", err.message || err);
+    }
+  }
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error("No AI provider available — set ANTHROPIC_API_KEY or GEMINI_API_KEY in your env.");
+  }
+  console.log("Using Gemini as fallback...");
+  return await callGemini(prompt);
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 function deduplicateBySender(emails: RawEmail[]): RawEmail[] {
   const seen = new Map<string, RawEmail>();
   for (const email of emails) {
@@ -45,6 +81,8 @@ export function getGreeting(): string {
   return "Good evening";
 }
 
+// ─── Main export ─────────────────────────────────────────────────────────────
+
 export async function generateDigest(emails: RawEmail[]): Promise<Digest> {
   if (emails.length === 0) {
     return {
@@ -58,24 +96,25 @@ export async function generateDigest(emails: RawEmail[]): Promise<Digest> {
   const uniqueEmails = deduplicateBySender(emails);
   console.log(`Processing ${uniqueEmails.length} unique senders (from ${emails.length} total emails)`);
 
-  // Cap at 40 senders to stay within token limits comfortably
   const toProcess = uniqueEmails.slice(0, 40);
 
-  // Build one big batch prompt — all newsletters in a single API call
-  const newsletterBlocks = toProcess.map((email, i) => 
-    `--- NEWSLETTER ${i + 1} ---
+  const newsletterBlocks = toProcess
+    .map(
+      (email, i) =>
+        `--- NEWSLETTER ${i + 1} ---
 From: ${email.sender}
 Subject: ${email.subject}
 Content: ${email.body.slice(0, 3000)}`
-  ).join("\n\n");
+    )
+    .join("\n\n");
 
-  const batchPrompt = `You are creating a comprehensive 2-page digest of newsletters received over the past 4 days.
+  const batchPrompt = `You are creating a comprehensive digest of newsletters received over the past 4 days.
 
 Here are ${toProcess.length} newsletters:
 
 ${newsletterBlocks}
 
-For EACH newsletter, write a thorough summary paragraph (4-6 sentences). Don't be brief or buzzwordy — give the actual substance: what was argued, what data was shared, what events happened, what advice was given, specific names and numbers where relevant. This should read like a well-informed friend telling you exactly what you missed.
+For EACH newsletter, write a thorough summary paragraph (4-6 sentences). Don't be brief or buzzwordy — give the actual substance: what was argued, what data was shared, what events happened, what advice was given, specific names and numbers where relevant.
 
 Respond ONLY with valid JSON in this exact structure, nothing else:
 {
@@ -88,30 +127,25 @@ Respond ONLY with valid JSON in this exact structure, nothing else:
   ]
 }`;
 
-  const model = genAI.getGenerativeModel({ model: MODEL });
-  
   let parsed: { highlights: string; summaries: Array<{ index: number; summary: string }> };
-  
+
   try {
-    const result = await model.generateContent(batchPrompt);
-    const text = result.response.text().trim();
-    // Strip any markdown code fences if present
+    const text = await generateText(batchPrompt);
     const clean = text.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
     parsed = JSON.parse(clean);
   } catch (err: any) {
-    console.error("Batch summarisation failed:", err.message || err);
-    // Fallback: return entries with no summaries rather than crashing
+    console.error("Digest generation failed:", err.message || err);
     return {
       generatedAt: new Date().toISOString(),
       dateRange: formatDateRange(),
-      entries: toProcess.map(email => ({
+      entries: toProcess.map((email) => ({
         sender: email.sender,
         senderEmail: email.senderEmail,
         subject: email.subject,
         date: email.date,
-        summary: "Summary unavailable — API quota exceeded. Try again tomorrow.",
+        summary: "Summary unavailable — AI service unreachable. Try again shortly.",
       })),
-      overallHighlights: "Digest partially generated. Some summaries unavailable due to API limits.",
+      overallHighlights: "Digest could not be fully generated. Please try again.",
     };
   }
 
@@ -120,8 +154,8 @@ Respond ONLY with valid JSON in this exact structure, nothing else:
     senderEmail: email.senderEmail,
     subject: email.subject,
     date: email.date,
-    summary: parsed.summaries.find(s => s.index === i + 1)?.summary 
-      ?? "Summary not generated.",
+    summary:
+      parsed.summaries.find((s) => s.index === i + 1)?.summary ?? "Summary not generated.",
   }));
 
   return {
