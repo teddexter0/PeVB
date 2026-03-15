@@ -418,98 +418,141 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
             zIndex: 9999,
           }}
         >
-          <div
-            style={{
-              maxWidth: "720px",
-              margin: "0 auto",
-              padding: "0.55rem 1rem",
-              display: "flex",
-              alignItems: "center",
-              gap: "0.65rem",
-            }}
-          >
-            {/* Transport */}
-            <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", flexShrink: 0 }}>
-              <button
-                onClick={() => skipTo(segmentIndexRef.current - 1)}
-                disabled={!canPrev}
-                style={{
-                  background: "none", border: "none",
-                  color: canPrev ? "var(--paper)" : "rgba(245,240,232,0.2)",
-                  cursor: canPrev ? "pointer" : "default",
-                  fontSize: "1rem", padding: "0.2rem", lineHeight: 1,
-                }}
-              >⏮</button>
-              <button
-                onClick={handlePlayPause}
-                disabled={readingState === "loading"}
-                style={{
-                  background: "var(--accent)", border: "none", color: "white",
-                  width: "2rem", height: "2rem", borderRadius: "50%",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  cursor: readingState === "loading" ? "not-allowed" : "pointer",
-                  fontSize: "0.75rem", flexShrink: 0,
-                }}
-              >
-                {readingState === "loading" ? "…" : readingState === "playing" ? "⏸" : "▶"}
-              </button>
-              <button
-                onClick={() => skipTo(segmentIndexRef.current + 1)}
-                disabled={!canNext}
-                style={{
-                  background: "none", border: "none",
-                  color: canNext ? "var(--paper)" : "rgba(245,240,232,0.2)",
-                  cursor: canNext ? "pointer" : "default",
-                  fontSize: "1rem", padding: "0.2rem", lineHeight: 1,
-                }}
-              >⏭</button>
-              <button
-                onClick={stopAll}
-                disabled={!isActive}
-                style={{
-                  background: "none", border: "none",
-                  color: isActive ? "rgba(245,240,232,0.6)" : "rgba(245,240,232,0.15)",
-                  cursor: isActive ? "pointer" : "default",
-                  fontSize: "0.85rem", padding: "0.2rem", lineHeight: 1,
-                }}
-                title="Stop"
-              >⏹</button>
+          <div style={{ maxWidth: "720px", margin: "0 auto", padding: "0.6rem 1rem 0.3rem" }}>
+
+            {/* Row 1: transport + label + speed + scroll-up */}
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              {/* Transport buttons — big enough to tap */}
+              <div style={{ display: "flex", alignItems: "center", gap: "0.15rem", flexShrink: 0 }}>
+                <button
+                  onClick={() => skipTo(segmentIndexRef.current - 1)}
+                  disabled={!canPrev}
+                  style={{
+                    background: "none", border: "none",
+                    color: canPrev ? "var(--paper)" : "rgba(245,240,232,0.2)",
+                    cursor: canPrev ? "pointer" : "default",
+                    fontSize: "1.5rem", padding: "0.1rem 0.25rem", lineHeight: 1,
+                  }}
+                >⏮</button>
+                <button
+                  onClick={handlePlayPause}
+                  style={{
+                    background: "var(--accent)", border: "none", color: "white",
+                    width: "2.5rem", height: "2.5rem", borderRadius: "50%",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    cursor: "pointer", fontSize: "1rem", flexShrink: 0,
+                  }}
+                >
+                  {readingState === "loading" ? "…" : readingState === "playing" ? "⏸" : "▶"}
+                </button>
+                <button
+                  onClick={() => skipTo(segmentIndexRef.current + 1)}
+                  disabled={!canNext}
+                  style={{
+                    background: "none", border: "none",
+                    color: canNext ? "var(--paper)" : "rgba(245,240,232,0.2)",
+                    cursor: canNext ? "pointer" : "default",
+                    fontSize: "1.5rem", padding: "0.1rem 0.25rem", lineHeight: 1,
+                  }}
+                >⏭</button>
+                <button
+                  onClick={stopAll}
+                  disabled={!isActive}
+                  style={{
+                    background: "none", border: "none",
+                    color: isActive ? "rgba(245,240,232,0.55)" : "rgba(245,240,232,0.15)",
+                    cursor: isActive ? "pointer" : "default",
+                    fontSize: "1.1rem", padding: "0.1rem 0.2rem", lineHeight: 1,
+                  }}
+                  title="Stop"
+                >⏹</button>
+              </div>
+
+              {/* Label */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  className="font-serif"
+                  style={{
+                    color: isActive ? "var(--paper)" : "rgba(245,240,232,0.3)",
+                    fontSize: "0.85rem",
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}
+                >
+                  {readingState === "loading"
+                    ? "Hold tight, getting the next part…"
+                    : currentLabel || "The Brief"}
+                </div>
+                <div
+                  className="font-mono"
+                  style={{ fontSize: "0.55rem", color: "rgba(245,240,232,0.38)", marginTop: "0.1rem" }}
+                >
+                  {activeVoice?.flag} {activeVoice?.label} {activeVoice?.gender === "F" ? "♀" : "♂"}
+                  {autoRotate && " · AUTO"}
+                </div>
+              </div>
+
+              {/* Speed + scroll-up */}
+              <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", flexShrink: 0 }}>
+                <button
+                  onClick={cycleSpeed}
+                  style={{
+                    background: "rgba(245,240,232,0.1)", border: "none", color: "var(--paper)",
+                    padding: "0.25rem 0.45rem", fontFamily: "DM Mono",
+                    fontSize: "0.65rem", cursor: "pointer", letterSpacing: "0.03em",
+                  }}
+                >
+                  {speed}×
+                </button>
+                <button
+                  onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+                  style={{
+                    background: "none", border: "none",
+                    color: "rgba(245,240,232,0.4)", cursor: "pointer",
+                    fontSize: "1.1rem", padding: "0.1rem 0.2rem", lineHeight: 1,
+                  }}
+                  title="Back to top"
+                >↑</button>
+              </div>
             </div>
 
-            {/* Label + voice */}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div
-                className="font-serif"
-                style={{
-                  color: isActive ? "var(--paper)" : "rgba(245,240,232,0.35)",
-                  fontSize: "0.82rem",
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                }}
-              >
-                {currentLabel || "The Brief"}
-              </div>
-              <div
-                className="font-mono"
-                style={{ fontSize: "0.55rem", color: "rgba(245,240,232,0.4)", marginTop: "0.1rem" }}
-              >
-                {activeVoice?.flag} {activeVoice?.label} {activeVoice?.gender === "F" ? "♀" : "♂"}
-                {autoRotate && " · AUTO"}
-              </div>
+            {/* Row 2: voice chips */}
+            <div
+              style={{
+                display: "flex",
+                gap: "0.35rem",
+                marginTop: "0.45rem",
+                marginBottom: "0.1rem",
+                overflowX: "auto",
+                scrollbarWidth: "none",
+              }}
+            >
+              {VOICE_KEYS.map((key) => {
+                const v = VOICE_POOL[key];
+                const isSel = key === selectedVoice;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => switchVoice(key)}
+                    style={{
+                      background: isSel ? "var(--accent)" : "transparent",
+                      border: "1px solid",
+                      borderColor: isSel ? "var(--accent)" : "rgba(245,240,232,0.18)",
+                      color: isSel ? "white" : "rgba(245,240,232,0.5)",
+                      padding: "0.15rem 0.5rem",
+                      fontFamily: "DM Mono",
+                      fontSize: "0.58rem",
+                      letterSpacing: "0.04em",
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {v.flag} {v.label} {v.gender === "F" ? "♀" : "♂"}
+                  </button>
+                );
+              })}
             </div>
 
-            {/* Speed */}
-            <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexShrink: 0 }}>
-              <button
-                onClick={cycleSpeed}
-                style={{
-                  background: "rgba(245,240,232,0.1)", border: "none", color: "var(--paper)",
-                  padding: "0.2rem 0.4rem", fontFamily: "DM Mono",
-                  fontSize: "0.6rem", cursor: "pointer", letterSpacing: "0.03em",
-                }}
-              >
-                {speed}×
-              </button>
-            </div>
           </div>
         </div>,
         document.body
@@ -591,7 +634,7 @@ function DigestPage({
   }
 
   return (
-    <div style={{ maxWidth: "720px", margin: "0 auto", padding: "0 1.5rem 6rem" }}>
+    <div style={{ maxWidth: "720px", margin: "0 auto", padding: "0 1.5rem 9rem" }}>
       {/* Masthead */}
       <div className="masthead fade-up">
         <p

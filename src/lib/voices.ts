@@ -67,35 +67,8 @@ export const VOICE_POOL: Record<string, VoiceConfig> = {
     style: "other",
   },
 
-  // ── Irish ─────────────────────────────────────────────────────
-  // (en-IE only has Standard tier — no Neural2/Journey available)
-  "dublin-f": {
-    name: "en-IE-Standard-A",
-    languageCode: "en-IE",
-    label: "Dublin",
-    gender: "F",
-    flag: "🇮🇪",
-    style: "british",
-  },
-  "cork-m": {
-    name: "en-IE-Standard-B",
-    languageCode: "en-IE",
-    label: "Cork",
-    gender: "M",
-    flag: "🇮🇪",
-    style: "british",
-  },
-
   // ── Indian ────────────────────────────────────────────────────
   // (en-NG not supported by Google TTS; en-IN Neural2 is the best non-Western option)
-  "mumbai-f": {
-    name: "en-IN-Neural2-A",
-    languageCode: "en-IN",
-    label: "Mumbai",
-    gender: "F",
-    flag: "🇮🇳",
-    style: "other",
-  },
   "delhi-m": {
     name: "en-IN-Neural2-B",
     languageCode: "en-IN",
