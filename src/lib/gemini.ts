@@ -24,7 +24,7 @@ async function callAnthropic(prompt: string): Promise<string> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
   const msg = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
-    max_tokens: 4096,
+    max_tokens: 8192,
     messages: [{ role: "user", content: prompt }],
   });
   const block = msg.content[0];
@@ -150,7 +150,13 @@ Respond ONLY with valid JSON in this exact structure, nothing else:
 
   try {
     const text = await generateText(batchPrompt);
-    const clean = text.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
+    // Strip markdown fences, then extract the outermost {...} in case the model
+    // added commentary before or after the JSON blob
+    const stripped = text.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
+    const start = stripped.indexOf("{");
+    const end = stripped.lastIndexOf("}");
+    if (start === -1 || end === -1) throw new Error("No JSON object found in AI response");
+    const clean = stripped.slice(start, end + 1);
     parsed = JSON.parse(clean);
   } catch (err: any) {
     console.error("Digest generation failed:", err.message || err);
