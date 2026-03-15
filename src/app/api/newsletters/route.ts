@@ -7,7 +7,7 @@ import { saveDigest, loadDigest } from "@/lib/store";
 
 const DIGEST_MAX_AGE_HOURS = 4;
 
-export const maxDuration = 60; // Allow up to 60s for AI processing
+export const maxDuration = 120; // Allow up to 120s for AI processing (Vercel Pro)
 
 export async function POST(req: NextRequest) {
   // Two modes: cron job (via secret) or manual trigger (via session)

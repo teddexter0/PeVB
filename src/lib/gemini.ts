@@ -109,7 +109,9 @@ export async function generateDigest(emails: RawEmail[]): Promise<Digest> {
   const uniqueEmails = deduplicateBySender(emails);
   console.log(`Processing ${uniqueEmails.length} unique senders (from ${emails.length} total emails)`);
 
-  const toProcess = uniqueEmails.slice(0, 40);
+  // Cap at 20 senders, 1500 chars per body — keeps prompt under ~35k chars
+  // which fits comfortably within Vercel's 60s function timeout
+  const toProcess = uniqueEmails.slice(0, 20);
 
   const newsletterBlocks = toProcess
     .map(
@@ -117,7 +119,7 @@ export async function generateDigest(emails: RawEmail[]): Promise<Digest> {
         `--- NEWSLETTER ${i + 1} ---
 From: ${email.sender}
 Subject: ${email.subject}
-Content: ${email.body.slice(0, 3000)}`
+Content: ${email.body.slice(0, 1500)}`
     )
     .join("\n\n");
 

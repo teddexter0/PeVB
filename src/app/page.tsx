@@ -706,10 +706,17 @@ export default function Home() {
     setRefreshing(true);
     try {
       const res = await fetch("/api/newsletters", { method: "POST" });
+      // Vercel 504 returns plain text, not JSON — guard against that
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        throw new Error(`Server error (${res.status}) — the AI is taking too long. Try again in a moment.`);
+      }
       const data = await res.json();
+      if (data.error) throw new Error(data.error);
       if (data.digest) setDigest(data.digest);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to generate:", err);
+      alert(err.message || "Failed to generate digest. Please try again.");
     } finally {
       setRefreshing(false);
     }
