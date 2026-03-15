@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { VOICES, VoiceDay } from "@/lib/voices";
+import { VOICE_POOL } from "@/lib/voices";
 
 function truncateToBytes(str: string, maxBytes: number): string {
   const buf = Buffer.from(str, "utf8");
@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing text or voice" }, { status: 400 });
   }
 
-  const voiceConfig = VOICES[voice as VoiceDay];
+  const voiceConfig = VOICE_POOL[voice];
   if (!voiceConfig) {
     return NextResponse.json({ error: "Invalid voice" }, { status: 400 });
   }
