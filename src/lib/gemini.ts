@@ -8,6 +8,7 @@ export interface DigestEntry {
   subject: string;
   date: string;
   summary: string;
+  tagline?: string; // punchy one-liner genre hook, e.g. "Your wallet just flinched"
 }
 
 export interface Digest {
@@ -109,8 +110,6 @@ export async function generateDigest(emails: RawEmail[]): Promise<Digest> {
   const uniqueEmails = deduplicateBySender(emails);
   console.log(`Processing ${uniqueEmails.length} unique senders (from ${emails.length} total emails)`);
 
-  // Cap at 20 senders, 1500 chars per body — keeps prompt under ~35k chars
-  // which fits comfortably within Vercel's 60s function timeout
   const toProcess = uniqueEmails.slice(0, 20);
 
   const newsletterBlocks = toProcess
@@ -123,26 +122,31 @@ Content: ${email.body.slice(0, 1500)}`
     )
     .join("\n\n");
 
-  const batchPrompt = `You are creating a comprehensive digest of newsletters received over the past 4 days.
+  const batchPrompt = `You are a sharp, entertaining briefing host — think a blend of Joe Rogan's bluntness, Jordan Peterson's depth, and Ryan Reynolds' wit. You make information feel alive, not corporate. You speak directly to the reader like a smart friend who actually read the stuff so they didn't have to.
 
-Here are ${toProcess.length} newsletters:
+Here are ${toProcess.length} newsletters from the past 4 days:
 
 ${newsletterBlocks}
 
-For EACH newsletter, write a thorough summary paragraph (4-6 sentences). Don't be brief or buzzwordy — give the actual substance: what was argued, what data was shared, what events happened, what advice was given, specific names and numbers where relevant.
+For EACH newsletter, produce:
+1. A "tagline": One punchy, specific sentence that captures the vibe and category. Make it witty and personal — like a movie logline or a podcast episode title. Examples: "Your portfolio just had a panic attack", "AI took another job, this time it's awkward", "Streaming wars: the body count rises", "Someone in Washington blinked first". Be specific to the actual content, not generic.
+2. A "summary": 3-4 sentences in conversational, no-BS style. Real substance — actual numbers, names, events, arguments. Write it so someone listening while commuting gets the full picture. Where it makes sense, naturally connect dots to other newsletters in this same batch (e.g. "which tracks with what [Other Sender] said about...").
+
+For "highlights": Write 3-4 sentences like an opinionated host's opening monologue. What's the story of this period? What themes keep coming up? Be specific and direct — no vague corporate summaries.
 
 Respond ONLY with valid JSON in this exact structure, nothing else:
 {
-  "highlights": "3-4 sentence overview of the most important/interesting things across ALL newsletters this period. Specific, not vague.",
+  "highlights": "Opening monologue: the big picture story of this period in 3-4 punchy sentences...",
   "summaries": [
     {
       "index": 1,
-      "summary": "Full substantive paragraph here..."
+      "tagline": "Your wallet just flinched",
+      "summary": "Conversational, substantive 3-4 sentence summary here..."
     }
   ]
 }`;
 
-  let parsed: { highlights: string; summaries: Array<{ index: number; summary: string }> };
+  let parsed: { highlights: string; summaries: Array<{ index: number; tagline?: string; summary: string }> };
 
   try {
     const text = await generateText(batchPrompt);
@@ -159,19 +163,23 @@ Respond ONLY with valid JSON in this exact structure, nothing else:
         subject: email.subject,
         date: email.date,
         summary: "Summary unavailable — AI service unreachable. Try again shortly.",
+        tagline: undefined,
       })),
       overallHighlights: "Digest could not be fully generated. Please try again.",
     };
   }
 
-  const entries: DigestEntry[] = toProcess.map((email, i) => ({
-    sender: email.sender,
-    senderEmail: email.senderEmail,
-    subject: email.subject,
-    date: email.date,
-    summary:
-      parsed.summaries.find((s) => s.index === i + 1)?.summary ?? "Summary not generated.",
-  }));
+  const entries: DigestEntry[] = toProcess.map((email, i) => {
+    const match = parsed.summaries.find((s) => s.index === i + 1);
+    return {
+      sender: email.sender,
+      senderEmail: email.senderEmail,
+      subject: email.subject,
+      date: email.date,
+      summary: match?.summary ?? "Summary not generated.",
+      tagline: match?.tagline,
+    };
+  });
 
   return {
     generatedAt: new Date().toISOString(),
