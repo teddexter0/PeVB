@@ -2,6 +2,7 @@
 
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useEffect, useState, useRef, forwardRef, useImperativeHandle } from "react";
+import { createPortal } from "react-dom";
 import { Digest } from "@/lib/gemini";
 import { VOICE_POOL, VOICE_KEYS, VoiceKey, getDefaultVoice, buildRotationQueue } from "@/lib/voices";
 
@@ -114,6 +115,8 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
   const [currentLabel, setCurrentLabel] = useState("");
   const [speed, setSpeed] = useState(1);
   const [autoRotate, setAutoRotate] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const segmentsRef = useRef<Segment[]>([]);
@@ -277,6 +280,14 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
     setSpeed((s) => (s === 0.75 ? 1 : s === 1 ? 1.25 : 0.75));
   }
 
+  function stopAll() {
+    cancelCurrent();
+    setReadingState("idle");
+    setCurrentLabel("");
+    onReadingEntryRef.current(null);
+    segmentIndexRef.current = 0;
+  }
+
   const activeVoice = VOICE_POOL[selectedVoice];
   const isActive = readingState !== "idle";
   const totalSegs = segmentsRef.current.length;
@@ -393,19 +404,18 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
         </div>
       </div>
 
-      {/* ── Floating mini-player (Spotify-style, fixed to screen) ─── */}
-      {isActive && (
+      {/* ── Floating mini-player — portalled to body to escape any CSS transform ── */}
+      {mounted && createPortal(
         <div
           style={{
             position: "fixed",
             bottom: 0,
             left: 0,
             right: 0,
-            // iPhone safe area
             paddingBottom: "env(safe-area-inset-bottom, 0px)",
             background: "var(--ink)",
             borderTop: "1px solid rgba(245,240,232,0.15)",
-            zIndex: 200,
+            zIndex: 9999,
           }}
         >
           <div
@@ -437,7 +447,8 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
                   background: "var(--accent)", border: "none", color: "white",
                   width: "2rem", height: "2rem", borderRadius: "50%",
                   display: "flex", alignItems: "center", justifyContent: "center",
-                  cursor: "pointer", fontSize: "0.75rem", flexShrink: 0,
+                  cursor: readingState === "loading" ? "not-allowed" : "pointer",
+                  fontSize: "0.75rem", flexShrink: 0,
                 }}
               >
                 {readingState === "loading" ? "…" : readingState === "playing" ? "⏸" : "▶"}
@@ -452,14 +463,26 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
                   fontSize: "1rem", padding: "0.2rem", lineHeight: 1,
                 }}
               >⏭</button>
+              <button
+                onClick={stopAll}
+                disabled={!isActive}
+                style={{
+                  background: "none", border: "none",
+                  color: isActive ? "rgba(245,240,232,0.6)" : "rgba(245,240,232,0.15)",
+                  cursor: isActive ? "pointer" : "default",
+                  fontSize: "0.85rem", padding: "0.2rem", lineHeight: 1,
+                }}
+                title="Stop"
+              >⏹</button>
             </div>
 
-            {/* Label + voice chip */}
+            {/* Label + voice */}
             <div style={{ flex: 1, minWidth: 0 }}>
               <div
                 className="font-serif"
                 style={{
-                  color: "var(--paper)", fontSize: "0.82rem",
+                  color: isActive ? "var(--paper)" : "rgba(245,240,232,0.35)",
+                  fontSize: "0.82rem",
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                 }}
               >
@@ -474,7 +497,7 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
               </div>
             </div>
 
-            {/* Speed + top */}
+            {/* Speed */}
             <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexShrink: 0 }}>
               <button
                 onClick={cycleSpeed}
@@ -486,18 +509,10 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
               >
                 {speed}×
               </button>
-              <button
-                onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-                style={{
-                  background: "none", border: "none",
-                  color: "rgba(245,240,232,0.45)", cursor: "pointer",
-                  fontSize: "0.95rem", padding: "0.2rem", lineHeight: 1,
-                }}
-                title="Back to top"
-              >↑</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
