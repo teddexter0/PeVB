@@ -43,8 +43,21 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Warn loudly in logs if no AI key is set — makes Vercel log diagnosis easy
+  const hasAnthropic = !!process.env.ANTHROPIC_API_KEY;
+  const hasGemini = !!process.env.GEMINI_API_KEY;
+  if (!hasAnthropic && !hasGemini) {
+    console.error("FATAL: Neither ANTHROPIC_API_KEY nor GEMINI_API_KEY is set. Add at least one in Vercel → Settings → Environment Variables.");
+    return NextResponse.json(
+      { error: "No AI provider configured. Add ANTHROPIC_API_KEY (or GEMINI_API_KEY) to your environment variables." },
+      { status: 500 }
+    );
+  }
+  console.log(`AI provider: ${hasAnthropic ? "Anthropic (primary)" : "Gemini (only)"}${hasAnthropic && hasGemini ? " + Gemini (fallback)" : ""}`);
+
+  let step = "loading cache";
   try {
-    // Return cached digest if it's fresh enough — avoids burning Gemini quota
+    // Return cached digest if it's fresh enough — avoids burning AI quota
     const existing = loadDigest();
     if (existing?.generatedAt) {
       const ageHours = (Date.now() - new Date(existing.generatedAt).getTime()) / 3_600_000;
@@ -54,17 +67,21 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    step = "fetching Gmail";
     console.log("Fetching newsletters from Gmail...");
     const emails = await fetchNewsletters(accessToken);
     console.log(`Found ${emails.length} newsletters. Generating digest...`);
 
+    step = "generating digest";
     const digest = await generateDigest(emails);
+
+    step = "saving digest";
     saveDigest(digest);
 
     console.log("Digest saved successfully.");
     return NextResponse.json({ success: true, count: emails.length, digest });
   } catch (err: any) {
-    console.error("Digest generation failed:", err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    console.error(`Digest generation failed at step "${step}":`, err);
+    return NextResponse.json({ error: `Failed at step "${step}": ${err.message}` }, { status: 500 });
   }
 }
