@@ -1,3 +1,5 @@
+import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { RawEmail } from "./gmail";
 
 export interface DigestEntry {
@@ -18,7 +20,6 @@ export interface Digest {
 // ─── AI providers ────────────────────────────────────────────────────────────
 
 async function callAnthropic(prompt: string): Promise<string> {
-  const Anthropic = (await import("@anthropic-ai/sdk")).default;
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
   const msg = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
@@ -31,7 +32,6 @@ async function callAnthropic(prompt: string): Promise<string> {
 }
 
 async function callGemini(prompt: string): Promise<string> {
-  const { GoogleGenerativeAI } = await import("@google/generative-ai");
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
   const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
   const result = await model.generateContent(prompt);
@@ -41,17 +41,30 @@ async function callGemini(prompt: string): Promise<string> {
 async function generateText(prompt: string): Promise<string> {
   if (process.env.ANTHROPIC_API_KEY) {
     try {
-      console.log("Using Anthropic (Claude) for digest generation...");
-      return await callAnthropic(prompt);
+      console.log("Using Anthropic (Claude Haiku) for digest generation...");
+      const result = await callAnthropic(prompt);
+      console.log("Anthropic succeeded.");
+      return result;
     } catch (err: any) {
-      console.warn("Anthropic failed, falling back to Gemini:", err.message || err);
+      console.error("Anthropic call failed — full error:", err);
+      console.error("Anthropic error message:", err.message);
+      console.error("Anthropic status:", err.status);
+      if (process.env.GEMINI_API_KEY) {
+        console.log("Falling back to Gemini...");
+      }
     }
+  } else {
+    console.warn("ANTHROPIC_API_KEY not set — skipping Claude.");
   }
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error("No AI provider available — set ANTHROPIC_API_KEY or GEMINI_API_KEY in your env.");
+
+  if (process.env.GEMINI_API_KEY) {
+    console.log("Using Gemini as fallback...");
+    return await callGemini(prompt);
   }
-  console.log("Using Gemini as fallback...");
-  return await callGemini(prompt);
+
+  throw new Error(
+    "No AI provider available. Set ANTHROPIC_API_KEY or GEMINI_API_KEY in Vercel → Settings → Environment Variables."
+  );
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

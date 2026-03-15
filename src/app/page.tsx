@@ -260,22 +260,23 @@ function VoicePlayer({
         </div>
         <div
           className="font-serif"
-          style={{
-            color: "var(--paper)",
-            fontSize: "1rem",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
+          style={{ color: "var(--paper)", fontSize: "1rem", lineHeight: 1.3 }}
         >
-          {isActive && currentLabel
-            ? currentLabel
-            : `${activeVoice.label} · ${activeVoice.description}`}
+          {isActive && currentLabel ? (
+            currentLabel
+          ) : (
+            <>
+              <span>{activeVoice.label}</span>
+              <span style={{ color: "rgba(245,240,232,0.45)", fontSize: "0.8rem" }}>
+                {" · "}{activeVoice.description}
+              </span>
+            </>
+          )}
         </div>
       </div>
 
       {/* Voice toggle */}
-      <div style={{ display: "flex", gap: "0.5rem" }}>
+      <div style={{ display: "flex", gap: "0.5rem", flexShrink: 0 }}>
         {(["sunday", "wednesday"] as VoiceDay[]).map((v) => (
           <button
             key={v}
