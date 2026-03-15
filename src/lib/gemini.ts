@@ -110,7 +110,7 @@ export async function generateDigest(emails: RawEmail[]): Promise<Digest> {
   const uniqueEmails = deduplicateBySender(emails);
   console.log(`Processing ${uniqueEmails.length} unique senders (from ${emails.length} total emails)`);
 
-  const toProcess = uniqueEmails.slice(0, 20);
+  const toProcess = uniqueEmails.slice(0, 35);
 
   const newsletterBlocks = toProcess
     .map(

@@ -173,6 +173,22 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
     setCurrentLabel(seg.label);
     onReadingEntryRef.current(seg.entryIndex);
 
+    // Speak a bridge phrase (instant, browser voice) while TTS audio fetches
+    const isEmailTransition = index > 0 && segments[index - 1]?.entryIndex !== seg.entryIndex;
+    if (isEmailTransition && typeof window !== "undefined" && window.speechSynthesis) {
+      const bridges = [
+        "Hold tight, getting the next one…",
+        "One moment, loading your next story…",
+        "Next up, just a second…",
+        "Coming right up…",
+        "Loading the next story, bear with me…",
+      ];
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(bridges[Math.floor(Math.random() * bridges.length)]);
+      utter.rate = speedRef.current;
+      window.speechSynthesis.speak(utter);
+    }
+
     try {
       const res = await fetch("/api/tts", {
         method: "POST",
@@ -182,6 +198,11 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
       const data = await res.json();
       if (!data.audioContent) throw new Error("No audio returned");
       if (playIdRef.current !== playId) return;
+
+      // Stop bridge phrase the moment real audio is ready
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
 
       const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
       audioRef.current = audio;
@@ -207,6 +228,7 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
       setReadingState("playing");
     } catch (err) {
       if (playIdRef.current !== playId) return;
+      if (typeof window !== "undefined" && window.speechSynthesis) window.speechSynthesis.cancel();
       console.error("TTS failed:", err);
       alert("Voice failed — check GOOGLE_TTS_API_KEY in your env.");
       setReadingState("idle");
@@ -418,12 +440,12 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
             zIndex: 9999,
           }}
         >
-          <div style={{ maxWidth: "720px", margin: "0 auto", padding: "0.6rem 1rem 0.3rem" }}>
+          <div style={{ maxWidth: "720px", margin: "0 auto", padding: "0.75rem 1rem 0.4rem" }}>
 
             {/* Row 1: transport + label + speed + scroll-up */}
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              {/* Transport buttons — big enough to tap */}
-              <div style={{ display: "flex", alignItems: "center", gap: "0.15rem", flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+              {/* Transport buttons */}
+              <div style={{ display: "flex", alignItems: "center", gap: "0.2rem", flexShrink: 0 }}>
                 <button
                   onClick={() => skipTo(segmentIndexRef.current - 1)}
                   disabled={!canPrev}
@@ -431,16 +453,16 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
                     background: "none", border: "none",
                     color: canPrev ? "var(--paper)" : "rgba(245,240,232,0.2)",
                     cursor: canPrev ? "pointer" : "default",
-                    fontSize: "1.5rem", padding: "0.1rem 0.25rem", lineHeight: 1,
+                    fontSize: "1.6rem", padding: "0.15rem 0.3rem", lineHeight: 1,
                   }}
                 >⏮</button>
                 <button
                   onClick={handlePlayPause}
                   style={{
                     background: "var(--accent)", border: "none", color: "white",
-                    width: "2.5rem", height: "2.5rem", borderRadius: "50%",
+                    width: "2.8rem", height: "2.8rem", borderRadius: "50%",
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    cursor: "pointer", fontSize: "1rem", flexShrink: 0,
+                    cursor: "pointer", fontSize: "1.1rem", flexShrink: 0,
                   }}
                 >
                   {readingState === "loading" ? "…" : readingState === "playing" ? "⏸" : "▶"}
@@ -452,7 +474,7 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
                     background: "none", border: "none",
                     color: canNext ? "var(--paper)" : "rgba(245,240,232,0.2)",
                     cursor: canNext ? "pointer" : "default",
-                    fontSize: "1.5rem", padding: "0.1rem 0.25rem", lineHeight: 1,
+                    fontSize: "1.6rem", padding: "0.15rem 0.3rem", lineHeight: 1,
                   }}
                 >⏭</button>
                 <button
@@ -460,9 +482,9 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
                   disabled={!isActive}
                   style={{
                     background: "none", border: "none",
-                    color: isActive ? "rgba(245,240,232,0.55)" : "rgba(245,240,232,0.15)",
+                    color: isActive ? "rgba(245,240,232,0.6)" : "rgba(245,240,232,0.15)",
                     cursor: isActive ? "pointer" : "default",
-                    fontSize: "1.1rem", padding: "0.1rem 0.2rem", lineHeight: 1,
+                    fontSize: "1.2rem", padding: "0.15rem 0.2rem", lineHeight: 1,
                   }}
                   title="Stop"
                 >⏹</button>
@@ -474,7 +496,7 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
                   className="font-serif"
                   style={{
                     color: isActive ? "var(--paper)" : "rgba(245,240,232,0.3)",
-                    fontSize: "0.85rem",
+                    fontSize: "0.92rem",
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                   }}
                 >
@@ -484,7 +506,7 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
                 </div>
                 <div
                   className="font-mono"
-                  style={{ fontSize: "0.55rem", color: "rgba(245,240,232,0.38)", marginTop: "0.1rem" }}
+                  style={{ fontSize: "0.62rem", color: "rgba(245,240,232,0.4)", marginTop: "0.15rem" }}
                 >
                   {activeVoice?.flag} {activeVoice?.label} {activeVoice?.gender === "F" ? "♀" : "♂"}
                   {autoRotate && " · AUTO"}
@@ -492,13 +514,13 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
               </div>
 
               {/* Speed + scroll-up */}
-              <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", flexShrink: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexShrink: 0 }}>
                 <button
                   onClick={cycleSpeed}
                   style={{
-                    background: "rgba(245,240,232,0.1)", border: "none", color: "var(--paper)",
-                    padding: "0.25rem 0.45rem", fontFamily: "DM Mono",
-                    fontSize: "0.65rem", cursor: "pointer", letterSpacing: "0.03em",
+                    background: "rgba(245,240,232,0.12)", border: "1px solid rgba(245,240,232,0.15)",
+                    color: "var(--paper)", padding: "0.3rem 0.55rem", fontFamily: "DM Mono",
+                    borderRadius: "4px", fontSize: "0.72rem", cursor: "pointer", letterSpacing: "0.03em",
                   }}
                 >
                   {speed}×
@@ -506,22 +528,22 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
                 <button
                   onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
                   style={{
-                    background: "none", border: "none",
-                    color: "rgba(245,240,232,0.4)", cursor: "pointer",
-                    fontSize: "1.1rem", padding: "0.1rem 0.2rem", lineHeight: 1,
+                    background: "rgba(245,240,232,0.08)", border: "1px solid rgba(245,240,232,0.15)",
+                    color: "rgba(245,240,232,0.55)", cursor: "pointer", borderRadius: "4px",
+                    fontSize: "1.1rem", padding: "0.25rem 0.4rem", lineHeight: 1,
                   }}
                   title="Back to top"
                 >↑</button>
               </div>
             </div>
 
-            {/* Row 2: voice chips */}
+            {/* Row 2: voice chips — pill shaped, easier to tap */}
             <div
               style={{
                 display: "flex",
-                gap: "0.35rem",
-                marginTop: "0.45rem",
-                marginBottom: "0.1rem",
+                gap: "0.4rem",
+                marginTop: "0.55rem",
+                marginBottom: "0.15rem",
                 overflowX: "auto",
                 scrollbarWidth: "none",
               }}
@@ -534,14 +556,15 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
                     key={key}
                     onClick={() => switchVoice(key)}
                     style={{
-                      background: isSel ? "var(--accent)" : "transparent",
+                      background: isSel ? "var(--accent)" : "rgba(245,240,232,0.07)",
                       border: "1px solid",
-                      borderColor: isSel ? "var(--accent)" : "rgba(245,240,232,0.18)",
-                      color: isSel ? "white" : "rgba(245,240,232,0.5)",
-                      padding: "0.15rem 0.5rem",
+                      borderColor: isSel ? "var(--accent)" : "rgba(245,240,232,0.2)",
+                      color: isSel ? "white" : "rgba(245,240,232,0.65)",
+                      padding: "0.3rem 0.7rem",
+                      borderRadius: "999px",
                       fontFamily: "DM Mono",
-                      fontSize: "0.58rem",
-                      letterSpacing: "0.04em",
+                      fontSize: "0.7rem",
+                      letterSpacing: "0.03em",
                       cursor: "pointer",
                       whiteSpace: "nowrap",
                       flexShrink: 0,
@@ -569,12 +592,14 @@ function DigestPage({
   refreshing,
   autoPlay,
   onAutoPlayConsumed,
+  cacheAge,
 }: {
   digest: Digest | null;
   onRefresh: () => void;
   refreshing: boolean;
   autoPlay: boolean;
   onAutoPlayConsumed: () => void;
+  cacheAge: string | null;
 }) {
   const { data: session } = useSession();
   const name = session?.user?.name?.split(" ")[0] || "you";
@@ -701,6 +726,19 @@ function DigestPage({
           </span>
         )}
         <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+          {cacheAge && (
+            <span
+              className="font-mono"
+              style={{
+                fontSize: "0.6rem", color: "var(--muted)", letterSpacing: "0.05em",
+                background: "rgba(180,60,40,0.08)", border: "1px solid var(--border)",
+                padding: "0.2rem 0.5rem", borderRadius: "3px",
+              }}
+              title="Loaded from local cache — hit Generate Now for fresh content"
+            >
+              ⚡ cached · {cacheAge}
+            </span>
+          )}
           <button className="btn-primary" onClick={onRefresh} disabled={refreshing}>
             {refreshing ? "Generating..." : "↻ Generate Now"}
           </button>
@@ -880,6 +918,36 @@ function DigestPage({
   );
 }
 
+// ─── localStorage digest cache ───────────────────────────────────────────────
+
+const DIGEST_CACHE_KEY = "thebrief_digest_v1";
+const DIGEST_CACHE_TTL = 3 * 60 * 60 * 1000; // 3 hours
+
+function readDigestCache(): { digest: Digest; savedAt: number } | null {
+  try {
+    const raw = localStorage.getItem(DIGEST_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Date.now() - parsed.savedAt > DIGEST_CACHE_TTL) return null;
+    return parsed;
+  } catch { return null; }
+}
+
+function writeDigestCache(digest: Digest) {
+  try {
+    localStorage.setItem(DIGEST_CACHE_KEY, JSON.stringify({ digest, savedAt: Date.now() }));
+  } catch { /* storage quota — ignore */ }
+}
+
+function formatCacheAge(savedAt: number): string {
+  const mins = Math.floor((Date.now() - savedAt) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  const rem = mins % 60;
+  return rem > 0 ? `${hrs}h ${rem}m ago` : `${hrs}h ago`;
+}
+
 // ─── Home ─────────────────────────────────────────────────────────────────────
 
 export default function Home() {
@@ -888,9 +956,17 @@ export default function Home() {
   const [refreshing, setRefreshing] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [autoPlay, setAutoPlay] = useState(false);
+  const [cacheAge, setCacheAge] = useState<string | null>(null);
 
   useEffect(() => {
     if (session && !loaded) {
+      // Instantly show cached digest if fresh enough
+      const cached = readDigestCache();
+      if (cached) {
+        setDigest(cached.digest);
+        setCacheAge(formatCacheAge(cached.savedAt));
+      }
+      // Still fetch from server in background (gets fresher data if available)
       fetchDigest();
       setLoaded(true);
     }
@@ -900,7 +976,11 @@ export default function Home() {
     try {
       const res = await fetch("/api/digest");
       const data = await res.json();
-      if (data.digest) setDigest(data.digest);
+      if (data.digest) {
+        setDigest(data.digest);
+        writeDigestCache(data.digest);
+        setCacheAge(null); // clear "from cache" banner — this is fresh
+      }
     } catch (err) {
       console.error("Failed to fetch digest:", err);
     }
@@ -918,7 +998,9 @@ export default function Home() {
       if (data.error) throw new Error(data.error);
       if (data.digest) {
         setDigest(data.digest);
-        setAutoPlay(true); // trigger auto-play; browser may block it — that's fine
+        writeDigestCache(data.digest);
+        setCacheAge(null);
+        setAutoPlay(true);
       }
     } catch (err: any) {
       console.error("Failed to generate:", err);
@@ -947,6 +1029,7 @@ export default function Home() {
       refreshing={refreshing}
       autoPlay={autoPlay}
       onAutoPlayConsumed={() => setAutoPlay(false)}
+      cacheAge={cacheAge}
     />
   );
 }
