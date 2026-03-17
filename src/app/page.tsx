@@ -114,7 +114,7 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
   const [readingState, setReadingState] = useState<"idle" | "loading" | "playing" | "paused">("idle");
   const [currentLabel, setCurrentLabel] = useState("");
   const [speed, setSpeed] = useState(1);
-  const [autoRotate, setAutoRotate] = useState(false);
+  const [autoRotate, setAutoRotate] = useState(true);
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -127,7 +127,7 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
   const onReadingEntryRef = useRef(onReadingEntry);
   const emailsPlayedRef = useRef(0);
   const rotationQueueRef = useRef<VoiceKey[]>([]);
-  const autoRotateRef = useRef(false);
+  const autoRotateRef = useRef(true);
 
   useEffect(() => { speedRef.current = speed; if (audioRef.current) audioRef.current.playbackRate = speed; }, [speed]);
   useEffect(() => { onReadingEntryRef.current = onReadingEntry; }, [onReadingEntry]);
@@ -164,6 +164,20 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
       setCurrentLabel("");
       onReadingEntryRef.current(null);
       segmentIndexRef.current = 0;
+      // Speak a completion phrase
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        const endings = [
+          "That's your briefing done. Go conquer.",
+          "And that's a wrap. You're now the most informed person in the room.",
+          "All caught up. Go do something with it.",
+          "That's everything. You're welcome.",
+          "Briefing complete. The world makes slightly more sense now.",
+        ];
+        window.speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(endings[Math.floor(Math.random() * endings.length)]);
+        utter.rate = speedRef.current;
+        window.speechSynthesis.speak(utter);
+      }
       return;
     }
 
@@ -207,6 +221,21 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
       const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
       audioRef.current = audio;
       audio.playbackRate = speedRef.current;
+
+      // Register with OS Media Session so audio keeps playing on lock screen
+      // and lock-screen transport controls work
+      if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: seg.label || "The Brief",
+          artist: VOICE_POOL[voiceRef.current]?.label ?? "The Brief",
+          album: "The Brief",
+        });
+        navigator.mediaSession.setActionHandler("play", () => { audio.play(); setReadingState("playing"); });
+        navigator.mediaSession.setActionHandler("pause", () => { audio.pause(); setReadingState("paused"); });
+        navigator.mediaSession.setActionHandler("previoustrack", () => skipTo(segmentIndexRef.current - 1));
+        navigator.mediaSession.setActionHandler("nexttrack", () => skipTo(segmentIndexRef.current + 1));
+        navigator.mediaSession.setActionHandler("stop", () => stopAll());
+      }
       audio.onended = () => {
         if (playIdRef.current !== playId) return;
         // Auto-rotate: every 5 emails played, switch accent
