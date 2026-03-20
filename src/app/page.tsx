@@ -3,7 +3,7 @@
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useEffect, useState, useRef, forwardRef, useImperativeHandle } from "react";
 import { createPortal } from "react-dom";
-import { Digest } from "@/lib/gemini";
+import { Digest, SarcasmLevel } from "@/lib/gemini";
 import { VOICE_POOL, VOICE_KEYS, VoiceKey, getDefaultVoice, buildRotationQueue } from "@/lib/voices";
 
 function SignInPage() {
@@ -114,7 +114,7 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
   const [readingState, setReadingState] = useState<"idle" | "loading" | "playing" | "paused">("idle");
   const [currentLabel, setCurrentLabel] = useState("");
   const [speed, setSpeed] = useState(1);
-  const [autoRotate, setAutoRotate] = useState(false);
+  const [autoRotate, setAutoRotate] = useState(true);
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -127,7 +127,7 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
   const onReadingEntryRef = useRef(onReadingEntry);
   const emailsPlayedRef = useRef(0);
   const rotationQueueRef = useRef<VoiceKey[]>([]);
-  const autoRotateRef = useRef(false);
+  const autoRotateRef = useRef(true);
 
   useEffect(() => { speedRef.current = speed; if (audioRef.current) audioRef.current.playbackRate = speed; }, [speed]);
   useEffect(() => { onReadingEntryRef.current = onReadingEntry; }, [onReadingEntry]);
@@ -164,6 +164,36 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
       setCurrentLabel("");
       onReadingEntryRef.current(null);
       segmentIndexRef.current = 0;
+      // Speak completion phrase via TTS (same voice, reliable after screen-off)
+      const endings = [
+        "That's your briefing done. Go conquer.",
+        "And that's a wrap. You're now the most informed person in the room.",
+        "All caught up. Go do something with it.",
+        "That's everything. You're welcome.",
+        "Briefing complete. The world makes slightly more sense now.",
+      ];
+      const endText = endings[Math.floor(Math.random() * endings.length)];
+      fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: endText, voice: voiceRef.current }),
+      })
+        .then((r) => r.json())
+        .then((d) => {
+          if (!d.audioContent) return;
+          const a = new Audio(`data:audio/mp3;base64,${d.audioContent}`);
+          a.playbackRate = speedRef.current;
+          a.play().catch(() => {});
+        })
+        .catch(() => {
+          // fallback: Web Speech
+          if (typeof window !== "undefined" && window.speechSynthesis) {
+            window.speechSynthesis.cancel();
+            const u = new SpeechSynthesisUtterance(endText);
+            u.rate = speedRef.current;
+            window.speechSynthesis.speak(u);
+          }
+        });
       return;
     }
 
@@ -207,12 +237,27 @@ const VoicePlayer = forwardRef<VoicePlayerHandle, {
       const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
       audioRef.current = audio;
       audio.playbackRate = speedRef.current;
+
+      // Register with OS Media Session so audio keeps playing on lock screen
+      // and lock-screen transport controls work
+      if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: seg.label || "The Brief",
+          artist: VOICE_POOL[voiceRef.current]?.label ?? "The Brief",
+          album: "The Brief",
+        });
+        navigator.mediaSession.setActionHandler("play", () => { audio.play(); setReadingState("playing"); });
+        navigator.mediaSession.setActionHandler("pause", () => { audio.pause(); setReadingState("paused"); });
+        navigator.mediaSession.setActionHandler("previoustrack", () => skipTo(segmentIndexRef.current - 1));
+        navigator.mediaSession.setActionHandler("nexttrack", () => skipTo(segmentIndexRef.current + 1));
+        navigator.mediaSession.setActionHandler("stop", () => stopAll());
+      }
       audio.onended = () => {
         if (playIdRef.current !== playId) return;
-        // Auto-rotate: every 5 emails played, switch accent
+        // Auto-rotate: every 3 emails played, switch accent
         if (seg.entryIndex !== null) {
           emailsPlayedRef.current++;
-          if (autoRotateRef.current && emailsPlayedRef.current % 5 === 0) {
+          if (autoRotateRef.current && emailsPlayedRef.current % 3 === 0) {
             const nextVoice = getNextRotationVoice();
             applyVoice(nextVoice);
             // Rebuild segments with new voice framing for remaining entries
@@ -593,6 +638,8 @@ function DigestPage({
   autoPlay,
   onAutoPlayConsumed,
   cacheAge,
+  sarcasmLevel,
+  onSarcasmChange,
 }: {
   digest: Digest | null;
   onRefresh: () => void;
@@ -600,6 +647,8 @@ function DigestPage({
   autoPlay: boolean;
   onAutoPlayConsumed: () => void;
   cacheAge: string | null;
+  sarcasmLevel: SarcasmLevel;
+  onSarcasmChange: (l: SarcasmLevel) => void;
 }) {
   const { data: session } = useSession();
   const name = session?.user?.name?.split(" ")[0] || "you";
@@ -725,7 +774,35 @@ function DigestPage({
             {digest ? "NO NEWSLETTERS THIS PERIOD" : "NO DIGEST YET"}
           </span>
         )}
-        <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {/* Sarcasm / tone toggle */}
+          <div style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}>
+            {(["subtle", "balanced", "sharp"] as SarcasmLevel[]).map((lvl) => {
+              const labels = { subtle: "Dry", balanced: "Balanced", sharp: "Sharp" };
+              const active = sarcasmLevel === lvl;
+              return (
+                <button
+                  key={lvl}
+                  onClick={() => onSarcasmChange(lvl)}
+                  title={`Tone: ${lvl}`}
+                  style={{
+                    background: active ? "var(--ink)" : "transparent",
+                    border: "1px solid",
+                    borderColor: active ? "var(--ink)" : "var(--border)",
+                    color: active ? "var(--paper)" : "var(--muted)",
+                    padding: "0.2rem 0.5rem",
+                    fontFamily: "DM Mono",
+                    fontSize: "0.6rem",
+                    letterSpacing: "0.06em",
+                    cursor: "pointer",
+                    borderRadius: "3px",
+                  }}
+                >
+                  {labels[lvl]}
+                </button>
+              );
+            })}
+          </div>
           {cacheAge && (
             <span
               className="font-mono"
@@ -957,6 +1034,15 @@ export default function Home() {
   const [loaded, setLoaded] = useState(false);
   const [autoPlay, setAutoPlay] = useState(false);
   const [cacheAge, setCacheAge] = useState<string | null>(null);
+  const [sarcasmLevel, setSarcasmLevel] = useState<SarcasmLevel>(() => {
+    if (typeof window === "undefined") return "balanced";
+    return (localStorage.getItem("thebrief_sarcasm") as SarcasmLevel) ?? "balanced";
+  });
+
+  function updateSarcasmLevel(level: SarcasmLevel) {
+    setSarcasmLevel(level);
+    localStorage.setItem("thebrief_sarcasm", level);
+  }
 
   useEffect(() => {
     if (session && !loaded) {
@@ -989,7 +1075,11 @@ export default function Home() {
   async function generateDigest() {
     setRefreshing(true);
     try {
-      const res = await fetch("/api/newsletters", { method: "POST" });
+      const res = await fetch("/api/newsletters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sarcasmLevel }),
+      });
       const contentType = res.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
         throw new Error(`Server error (${res.status}) — the AI is taking too long. Try again in a moment.`);
@@ -1030,6 +1120,8 @@ export default function Home() {
       autoPlay={autoPlay}
       onAutoPlayConsumed={() => setAutoPlay(false)}
       cacheAge={cacheAge}
+      sarcasmLevel={sarcasmLevel}
+      onSarcasmChange={updateSarcasmLevel}
     />
   );
 }

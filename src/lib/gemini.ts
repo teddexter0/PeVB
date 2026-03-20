@@ -97,7 +97,18 @@ export function getGreeting(): string {
 
 // ─── Main export ─────────────────────────────────────────────────────────────
 
-export async function generateDigest(emails: RawEmail[]): Promise<Digest> {
+export type SarcasmLevel = "subtle" | "balanced" | "sharp";
+
+const TONE_INSTRUCTIONS: Record<SarcasmLevel, string> = {
+  subtle:
+    "Keep the tone mostly informative and factual. A touch of dry wit where it fits naturally — think The Economist with a slight smirk. Minimal sarcasm, no exaggeration.",
+  balanced:
+    "Mix real substance with dry humour and light sarcasm. Think The Daily Show meets a good podcast — entertaining but always substantive. This is the default.",
+  sharp:
+    "Lean into the wit and sharp observations. More edge, more personality, more 'did they just say that' moments — but always grounded in the actual content. Serve the facts with maximum flavour.",
+};
+
+export async function generateDigest(emails: RawEmail[], sarcasmLevel: SarcasmLevel = "balanced"): Promise<Digest> {
   if (emails.length === 0) {
     return {
       generatedAt: new Date().toISOString(),
@@ -122,17 +133,21 @@ Content: ${email.body.slice(0, 1500)}`
     )
     .join("\n\n");
 
-  const batchPrompt = `You are a sharp, entertaining briefing host — think a blend of Joe Rogan's bluntness, Jordan Peterson's depth, and Ryan Reynolds' wit. You make information feel alive, not corporate. You speak directly to the reader like a smart friend who actually read the stuff so they didn't have to.
+  const toneInstruction = TONE_INSTRUCTIONS[sarcasmLevel];
+
+  const batchPrompt = `You are a sharp, witty briefing host — imagine the dry intelligence of John Oliver, the casual directness of Ryan Reynolds, and the analytical edge of Malcolm Gladwell. You make information feel alive and worth knowing. You speak like a clever friend who did all the reading so the listener didn't have to. Keep it clean and workplace-safe — no profanity, no crude language.
+
+TONE FOR THIS BRIEFING: ${toneInstruction}
 
 Here are ${toProcess.length} newsletters from the past 4 days:
 
 ${newsletterBlocks}
 
 For EACH newsletter, produce:
-1. A "tagline": One punchy, specific sentence that captures the vibe and category. Make it witty and personal — like a movie logline or a podcast episode title. Examples: "Your portfolio just had a panic attack", "AI took another job, this time it's awkward", "Streaming wars: the body count rises", "Someone in Washington blinked first". Be specific to the actual content, not generic.
-2. A "summary": 3-4 sentences in conversational, no-BS style. Real substance — actual numbers, names, events, arguments. Write it so someone listening while commuting gets the full picture. Where it makes sense, naturally connect dots to other newsletters in this same batch (e.g. "which tracks with what [Other Sender] said about...").
+1. A "tagline": One punchy, specific sentence that captures the vibe and category. Witty and sharp — like a great podcast episode title or a magazine subheader. Examples: "Your portfolio just had a panic attack", "AI took another job, this time it's awkward", "Streaming wars: the body count rises", "Someone in Washington blinked first". Be specific to the actual content, never generic.
+2. A "summary": 3-4 sentences in conversational, no-nonsense style. Real substance — actual numbers, names, events, arguments. Write it so someone listening while commuting gets the full picture. Where it makes sense, naturally connect dots to other newsletters in this batch (e.g. "which tracks with what [Other Sender] said about...").
 
-For "highlights": Write 3-4 sentences like an opinionated host's opening monologue. What's the story of this period? What themes keep coming up? Be specific and direct — no vague corporate summaries.
+For "highlights": Write 3-4 sentences like a host's sharp opening monologue. What's the story of this period? What themes keep coming up? Be specific and opinionated — no vague corporate summaries.
 
 Respond ONLY with valid JSON in this exact structure, nothing else:
 {
