@@ -97,7 +97,18 @@ export function getGreeting(): string {
 
 // ─── Main export ─────────────────────────────────────────────────────────────
 
-export async function generateDigest(emails: RawEmail[]): Promise<Digest> {
+export type SarcasmLevel = "subtle" | "balanced" | "sharp";
+
+const TONE_INSTRUCTIONS: Record<SarcasmLevel, string> = {
+  subtle:
+    "Keep the tone mostly informative and factual. A touch of dry wit where it fits naturally — think The Economist with a slight smirk. Minimal sarcasm, no exaggeration.",
+  balanced:
+    "Mix real substance with dry humour and light sarcasm. Think The Daily Show meets a good podcast — entertaining but always substantive. This is the default.",
+  sharp:
+    "Lean into the wit and sharp observations. More edge, more personality, more 'did they just say that' moments — but always grounded in the actual content. Serve the facts with maximum flavour.",
+};
+
+export async function generateDigest(emails: RawEmail[], sarcasmLevel: SarcasmLevel = "balanced"): Promise<Digest> {
   if (emails.length === 0) {
     return {
       generatedAt: new Date().toISOString(),
@@ -122,7 +133,11 @@ Content: ${email.body.slice(0, 1500)}`
     )
     .join("\n\n");
 
-  const batchPrompt = `You are a sharp, witty briefing host — imagine the dry intelligence of John Oliver, the casual directness of Ryan Reynolds, and the analytical edge of Malcolm Gladwell. You make information feel alive and worth knowing. You speak like a clever friend who did all the reading so the listener didn't have to. Keep it clean and workplace-safe — no profanity, no crude language — but absolutely keep the wit, the specific observations, and the light sarcasm. Dry humour and cultural references are encouraged.
+  const toneInstruction = TONE_INSTRUCTIONS[sarcasmLevel];
+
+  const batchPrompt = `You are a sharp, witty briefing host — imagine the dry intelligence of John Oliver, the casual directness of Ryan Reynolds, and the analytical edge of Malcolm Gladwell. You make information feel alive and worth knowing. You speak like a clever friend who did all the reading so the listener didn't have to. Keep it clean and workplace-safe — no profanity, no crude language.
+
+TONE FOR THIS BRIEFING: ${toneInstruction}
 
 Here are ${toProcess.length} newsletters from the past 4 days:
 

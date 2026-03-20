@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { fetchNewsletters } from "@/lib/gmail";
-import { generateDigest } from "@/lib/gemini";
+import { generateDigest, SarcasmLevel } from "@/lib/gemini";
 import { saveDigest, loadDigest } from "@/lib/store";
 
 const DIGEST_MAX_AGE_HOURS = 4;
@@ -13,6 +13,10 @@ export async function POST(req: NextRequest) {
   // Two modes: cron job (via secret) or manual trigger (via session)
   const cronSecret = req.headers.get("x-cron-secret");
   const isCron = cronSecret === process.env.CRON_SECRET;
+  const body = await req.json().catch(() => ({}));
+  const sarcasmLevel: SarcasmLevel = ["subtle", "balanced", "sharp"].includes(body.sarcasmLevel)
+    ? body.sarcasmLevel
+    : "balanced";
 
   let accessToken: string | undefined;
 
@@ -73,7 +77,7 @@ export async function POST(req: NextRequest) {
     console.log(`Found ${emails.length} newsletters. Generating digest...`);
 
     step = "generating digest";
-    const digest = await generateDigest(emails);
+    const digest = await generateDigest(emails, sarcasmLevel);
 
     step = "saving digest";
     saveDigest(digest);
